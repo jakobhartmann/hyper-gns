@@ -5,7 +5,7 @@ from gns import graph_network
 from torch_geometric.nn import radius_graph
 from typing import Dict
 
-
+hyper_edge_set = False
 class LearnedSimulator(nn.Module):
   """Learned simulator from https://arxiv.org/pdf/2002.09405.pdf."""
 
@@ -103,7 +103,7 @@ class LearnedSimulator(nn.Module):
 
     return receivers, senders
 
-  def _encoder_preprocessor(
+  def _encoder_preprocessor(#_build_graph_from_raw
           self,
           position_sequence: torch.tensor,
           nparticles_per_example: torch.tensor,
@@ -186,6 +186,21 @@ class LearnedSimulator(nn.Module):
     normalized_relative_distances = torch.norm(
         normalized_relative_displacements, dim=-1, keepdim=True)
     edge_features.append(normalized_relative_distances)
+ 
+    if hyper_edge_set:
+      #loopless implementation of returning hyperedge set
+      nr_particles = position_sequence.shape[0]
+      top = torch.zeros((nr_particles*2)).to(torch.int64)                 #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
+      bot = torch.tensor(np.floor(np.arange(0, nr_particles, 0.5)))       #(0,0,1,1,2,2,...)     - hyper-edge indexes.
+      idx_send = list(range(0,2*nr_particles,2))
+      idx_rec  = list(range(1,2*nr_particles,2))
+      top[idx_send]=senders
+      top[idx_rec]=receivers
+      top = top.reshape(-1,1)
+      bot = bot.reshape(-1,1)
+      return (torch.cat(node_features, dim=-1),
+              torch.cat((top, bot), dim=-1),
+              torch.cat(edge_features, dim=-1))
 
     return (torch.cat(node_features, dim=-1),
             torch.stack([senders, receivers]),
