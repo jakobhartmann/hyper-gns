@@ -5,7 +5,7 @@ from gns import graph_network
 from torch_geometric.nn import radius_graph
 from typing import Dict
 
-hyper_edge_set = False
+hyper_edge_set = True
 class LearnedSimulator(nn.Module):
   """Learned simulator from https://arxiv.org/pdf/2002.09405.pdf."""
 
