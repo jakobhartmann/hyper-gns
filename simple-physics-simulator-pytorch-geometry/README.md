@@ -46,3 +46,9 @@ Where:
 To get started do: 
 `https://storage.googleapis.com/learning-to-simulate-complex-physics/Datasets/WaterDrop/metadata.json`
 `https://storage.googleapis.com/learning-to-simulate-complex-physics/Datasets/WaterDrop/train.tfrecord`
+
+After downloading a dataset, run train_or_infer.py
+This should create a "rollout" which contains "rollout_0.pkl" file. This will contain the simulated trajectory.
+
+To see the contents of this trajectory do:
+python -m render_rollout --rollout_path=rollouts/rollout_0.pkl

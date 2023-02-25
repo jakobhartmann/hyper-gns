@@ -568,4 +568,5 @@ if __name__ == '__main__':
     if device == 'cuda':
         simulator.cuda()
     train(simulator)
-    # infer(simulator)
+    print("Inferring: ")
+    infer(simulator)
