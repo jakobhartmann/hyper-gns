@@ -256,7 +256,14 @@ class Simulator(nn.Module):
     def forward(self):
         pass
 
-    def _build_graph_from_raw(self, position_sequence, n_particles_per_example, particle_types):
+    def _build_graph_from_raw(self, position_sequence, n_particles_per_example, particle_types, return_incidence_matrix = False, hyper_edge_set = True):
+        # Added Return Incidence Matrix,
+        # If false, _build_graph_from_raw returns Ex2 matrix of node indexes.
+        # If true, _build_graph_from_raw returns NxE incidence matrix of hyper edges.
+        
+        #hyper_edge_set - if true returns a hyper-edge for every normal edge.
+        # e.g. edges ((1,2),(3,4)) become ([1,2,3,4],[0,0,1,1])
+
         n_total_points = position_sequence.shape[0]
         most_recent_position = position_sequence[:, -1] # (n_nodes, 2)
         velocity_sequence = time_diff(position_sequence)
@@ -298,9 +305,33 @@ class Simulator(nn.Module):
 
         normalized_relative_distances = torch.norm(normalized_relative_displacements, dim=-1, keepdim=True)
         edge_features.append(normalized_relative_distances)
+        
+        if return_incidence_matrix:
+            #each hyperedge will connect the sender to all recievers. There will be a total of #(nr nodes) hyper-edges. This might mean some duplicate hyper-edges
+            incidence_matrix = torch.zeros((n_total_points, n_total_points))
+            for idx, sender in enumerate(senders):
+                receiver = receivers[idx]
+                incidence_matrix[sender][receiver] = 1
+            return torch.cat(node_features, dim=-1), incidence_matrix, torch.cat(edge_features, dim=-1)
+        if hyper_edge_set:
+            #loopless implementation of returning hyperedge set
+            #hyper edge set will return x by 2 matrix.
+            n_total_edges = senders.shape[0]
+            top = torch.zeros((n_total_edges*2)).to(torch.int64)                 #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
+            bot = torch.tensor(np.floor(np.arange(0, n_total_edges, 0.5)))       #(0,0,1,1,2,2,...)     - hyper-edge indexes.
+            idx_send = list(range(0,2*n_total_edges,2))
+            idx_rec  = list(range(1,2*n_total_edges,2))
+            top[idx_send]=senders
+            top[idx_rec]=receivers
+            top = top.reshape(-1,1)
+            bot = bot.reshape(-1,1)
+            return (torch.cat(node_features, dim=-1),
+                    torch.cat((top, bot), dim=-1),
+                    torch.cat(edge_features, dim=-1))
+
 
         return torch.cat(node_features, dim=-1), torch.stack([senders, receivers]), torch.cat(edge_features, dim=-1)
-
+    
     def _compute_connectivity(self, node_features, n_particles_per_example, radius, add_self_edges=True):
         # handle batches. Default is 2 examples per batch
 
