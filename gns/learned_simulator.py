@@ -190,16 +190,18 @@ class LearnedSimulator(nn.Module):
     if hyper_edge_set:
       #loopless implementation of returning hyperedge set
       nr_edges = senders.shape[0]
-      top = torch.zeros((nr_edges*2)).to(torch.int64)                 #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
-      bot = torch.tensor(np.floor(np.arange(0, nr_edges, 0.5)))       #(0,0,1,1,2,2,...)     - hyper-edge indexes.
+      top = torch.zeros((nr_edges*2)).to(torch.int64).to(self._device)                              #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
+      bot = torch.tensor(np.floor(np.arange(0, nr_edges, 0.5))).to(torch.int64).to(self._device)    #(0,0,1,1,2,2,...)     - hyper-edge indexes.
       idx_send = list(range(0,2*nr_edges,2))
       idx_rec  = list(range(1,2*nr_edges,2))
       top[idx_send]=senders
       top[idx_rec]=receivers
       top = top.reshape(-1,1)
       bot = bot.reshape(-1,1)
+      hyper_edge_indices = torch.transpose(torch.cat((top, bot), dim=-1), 0, 1)
+
       return (torch.cat(node_features, dim=-1),
-              torch.cat((top, bot), dim=-1),
+              hyper_edge_indices,
               torch.cat(edge_features, dim=-1))
 
     return (torch.cat(node_features, dim=-1),
