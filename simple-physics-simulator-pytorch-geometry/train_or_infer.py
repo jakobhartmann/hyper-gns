@@ -12,14 +12,14 @@ os.makedirs('train_log', exist_ok=True)
 os.makedirs('rollouts', exist_ok=True)
 
 INPUT_SEQUENCE_LENGTH = 6
-batch_size = 2
+batch_size = 1
 noise_std = 6.7e-4
-training_steps = int(2e7)
+training_steps = 100#int(2e7)
 log_steps = 5
 eval_steps = 20
-save_steps = 100
+save_steps = training_steps# save after training
 model_path = None # 'model425000.pth'
-device = 'cuda'
+device = 'cpu'
 with open('data/metadata.json', 'rt') as f:
     metadata = json.loads(f.read())
 num_steps = metadata['sequence_length'] - INPUT_SEQUENCE_LENGTH
@@ -490,6 +490,7 @@ def train(simulator):
     step = 0
     try:
         for features, labels in ds:
+            print("step: ", step)# need this otherwise things won't print
             features['position'] = torch.tensor(features['position']).to(device)
             features['n_particles_per_example'] = torch.tensor(features['n_particles_per_example']).to(device)
             features['particle_type'] = torch.tensor(features['particle_type']).to(device)
@@ -527,7 +528,7 @@ def train(simulator):
 
             step += 1
             print(f'Training step: {step}/{training_steps}. Loss: {loss}.', end="\r",)
-            if step >= training_steps == 0:
+            if step >= training_steps:
                 break
 
             # if step % eval_steps == 0:
