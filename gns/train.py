@@ -34,6 +34,7 @@ flags.DEFINE_string('train_loss_file', 'train_loss.pkl', help='Train loss filena
 
 flags.DEFINE_integer('ntraining_steps', int(2E7), help='Number of training steps.')
 flags.DEFINE_integer('nsave_steps', int(5000), help='Number of steps at which to save the model.')
+flags.DEFINE_integer('train_loss_window_size', int(1000), help='Number of training steps used to calculate the average training loss. Should be a divider of nsave_steps.')
 
 # Learning rate parameters
 flags.DEFINE_float('lr_init', 1e-4, help='Initial learning rate.')
@@ -188,9 +189,10 @@ def train(rank, flags, world_size):
 
   simulator = DDP(serial_simulator.to(rank), device_ids=[rank], output_device=rank)
   optimizer = torch.optim.Adam(simulator.parameters(), lr=flags["lr_init"]*world_size)
-  step = 0
+  step = 1
 
   train_loss = {}
+  train_loss_sum = 0
 
   # If model_path does exist and model_file and train_state_file exist continue training.
   if flags["model_file"] is not None:
@@ -224,7 +226,7 @@ def train(rank, flags, world_size):
       optimizer.load_state_dict(train_state["optimizer_state"])
       optimizer_to(optimizer, rank)
       # set global train state
-      step = train_state["global_train_state"].pop("step")
+      step = train_state["global_train_state"].pop("step") + 1
  
     else:
       msg = f'Specified model_file {flags["model_path"] + flags["model_file"]} and train_state_file {flags["model_path"] + flags["train_state_file"]} and train_loss_file {flags["model_path"] + flags["train_loss_file"]} not found.'
@@ -283,7 +285,11 @@ def train(rank, flags, world_size):
 
         if rank == 0:
           print(f'Training step: {step}/{flags["ntraining_steps"]}. Loss: {loss}.')
-          train_loss[step] = loss
+          train_loss_sum += loss
+
+          if step % flags["train_loss_window_size"] == 0:
+            train_loss[step] = train_loss_sum / flags["train_loss_window_size"]
+            train_loss_sum = 0
 
         # Save model state
         if step % flags["nsave_steps"] == 0 and rank == 0:
@@ -375,6 +381,7 @@ def main(_):
   myflags["batch_size"] = FLAGS.batch_size
   myflags["ntraining_steps"] = FLAGS.ntraining_steps
   myflags["nsave_steps"] = FLAGS.nsave_steps
+  myflags["train_loss_window_size"] = FLAGS.train_loss_window_size
   myflags["model_file"] = FLAGS.model_file
   myflags["model_path"] = FLAGS.model_path
   myflags["train_state_file"] = FLAGS.train_state_file
