@@ -1,7 +1,9 @@
 from typing import List
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
+from torch_geometric.nn.conv import HypergraphConv
 
 
 def build_mlp(
@@ -378,6 +380,16 @@ class EncodeProcessDecode(nn.Module):
         nmlp_layers=nmlp_layers,
         mlp_hidden_dim=mlp_hidden_dim,
     )
+    self._simple_hypergcn = SimpleHyperGCN(
+        nnode_in = latent_dim,
+        nnode_out = latent_dim,
+        nedge_in = latent_dim,
+        nedge_out = latent_dim,
+        nmessage_passing_steps = nmessage_passing_steps,
+        hyperconv_hidden_dim = mlp_hidden_dim,
+        use_attention = False,
+        negative_slope = 0.2
+    )
     self._decoder = Decoder(
         nnode_in=latent_dim,
         nnode_out=nnode_out_features,
@@ -401,6 +413,35 @@ class EncodeProcessDecode(nn.Module):
 
     """
     x, edge_features = self._encoder(x, edge_features)
-    x, edge_features = self._processor(x, edge_index, edge_features)
+    # x, edge_features = self._processor(x, edge_index, edge_features)
+    x, edge_features = self._simple_hypergcn(x = x, hyperedge_index = edge_index, hyperedge_attr = edge_features)
     x = self._decoder(x)
     return x
+
+
+class SimpleHyperGCN(nn.Module):
+  def __init__(
+      self,
+      nnode_in: int,
+      nnode_out: int,
+      nedge_in: int,
+      nedge_out: int,
+      nmessage_passing_steps: int,
+      hyperconv_hidden_dim: int,
+      use_attention: bool,
+      negative_slope: float):
+    
+    super(SimpleHyperGCN, self).__init__()
+    self.hyperconv_stacks = [HypergraphConv(in_channels = nnode_in, out_channels = hyperconv_hidden_dim, use_attention = use_attention, negative_slope = negative_slope)]
+    self.hyperconv_stacks += [HypergraphConv(in_channels = hyperconv_hidden_dim, out_channels = hyperconv_hidden_dim, use_attention = use_attention, negative_slope = negative_slope) for _ in range(nmessage_passing_steps - 2)]
+    self.hyperconv_stacks += [HypergraphConv(in_channels = hyperconv_hidden_dim, out_channels = nnode_out, use_attention = use_attention, negative_slope = negative_slope)]
+    self.hyperconv_stacks = nn.ModuleList(self.hyperconv_stacks)
+
+  def forward(self, x, hyperedge_index, hyperedge_attr):
+    for i in range(len(self.hyperconv_stacks) - 1):
+      x = self.hyperconv_stacks[i](x, hyperedge_index)
+      x = F.relu(x)
+    
+    x = self.hyperconv_stacks[-1](x, hyperedge_index)
+
+    return x, hyperedge_attr
