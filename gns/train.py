@@ -30,6 +30,7 @@ flags.DEFINE_string('model_path', 'models/', help=('The path for saving checkpoi
 flags.DEFINE_string('output_path', 'rollouts/', help='The path for saving outputs (e.g. rollouts).')
 flags.DEFINE_string('model_file', None, help=('Model filename (.pt) to resume from. Can also use "latest" to default to newest file.'))
 flags.DEFINE_string('train_state_file', 'train_state.pt', help=('Train state filename (.pt) to resume from. Can also use "latest" to default to newest file.'))
+flags.DEFINE_string('train_loss_file', 'train_loss.pkl', help='Train loss filename (.pkl) to resume from. Can also use "latest" to default to newest file.')
 
 flags.DEFINE_integer('ntraining_steps', int(2E7), help='Number of training steps.')
 flags.DEFINE_integer('nsave_steps', int(5000), help='Number of steps at which to save the model.')
@@ -189,10 +190,12 @@ def train(rank, flags, world_size):
   optimizer = torch.optim.Adam(simulator.parameters(), lr=flags["lr_init"]*world_size)
   step = 0
 
+  train_loss = {}
+
   # If model_path does exist and model_file and train_state_file exist continue training.
   if flags["model_file"] is not None:
 
-    if flags["model_file"] == "latest" and flags["train_state_file"] == "latest":
+    if flags["model_file"] == "latest" and flags["train_state_file"] == "latest" and flags["train_loss_file"] == "latest":
       # find the latest model, assumes model and train_state files are in step.
       fnames = glob.glob(f'{flags["model_path"]}*model*pt')
       max_model_number = 0
@@ -204,10 +207,15 @@ def train(rank, flags, world_size):
       # reset names to point to the latest.
       flags["model_file"] = f"model-{max_model_number}.pt"
       flags["train_state_file"] = f"train_state-{max_model_number}.pt"
+      flags["train_loss_file"] = f"train_loss-{max_model_number}.pkl"
 
-    if os.path.exists(flags["model_path"] + flags["model_file"]) and os.path.exists(flags["model_path"] + flags["train_state_file"]):
+    if os.path.exists(flags["model_path"] + flags["model_file"]) and os.path.exists(flags["model_path"] + flags["train_state_file"]) and os.path.exists(flags["model_path"] + flags["train_loss_file"]):
       # load model
       simulator.module.load(flags["model_path"] + flags["model_file"])
+
+      # load train loss
+      with open(flags["model_path"] + flags["train_loss_file"], 'rb') as f:
+        train_loss = pickle.load(f)
 
       # load train state
       train_state = torch.load(flags["model_path"] + flags["train_state_file"])
@@ -219,7 +227,7 @@ def train(rank, flags, world_size):
       step = train_state["global_train_state"].pop("step")
  
     else:
-      msg = f'Specified model_file {flags["model_path"] + flags["model_file"]} and train_state_file {flags["model_path"] + flags["train_state_file"]} not found.'
+      msg = f'Specified model_file {flags["model_path"] + flags["model_file"]} and train_state_file {flags["model_path"] + flags["train_state_file"]} and train_loss_file {flags["model_path"] + flags["train_loss_file"]} not found.'
       raise FileNotFoundError(msg) 
 
   simulator.train()
@@ -275,12 +283,15 @@ def train(rank, flags, world_size):
 
         if rank == 0:
           print(f'Training step: {step}/{flags["ntraining_steps"]}. Loss: {loss}.')
+          train_loss[step] = loss
 
         # Save model state
         if step % flags["nsave_steps"] == 0 and rank == 0:
           simulator.module.save(flags["model_path"] + 'model-'+str(step)+'.pt')
           train_state = dict(optimizer_state=optimizer.state_dict(), global_train_state={"step":step})
           torch.save(train_state, f'{flags["model_path"]}train_state-{step}.pt')
+          with open(flags["model_path"] + 'train_loss-'+str(step)+'.pkl', 'wb') as f:
+            pickle.dump(train_loss, f)
 
         # Complete training
         if (step >= flags["ntraining_steps"]):
@@ -296,6 +307,8 @@ def train(rank, flags, world_size):
     simulator.module.save(flags["model_path"] + 'model-'+str(step)+'.pt')
     train_state = dict(optimizer_state=optimizer.state_dict(), global_train_state={"step":step})
     torch.save(train_state, f'{flags["model_path"]}train_state-{step}.pt')
+    with open(flags["model_path"] + 'train_loss-'+str(step)+'.pkl', 'wb') as f:
+      pickle.dump(train_loss, f)
 
   distribute.cleanup()
 
@@ -365,6 +378,7 @@ def main(_):
   myflags["model_file"] = FLAGS.model_file
   myflags["model_path"] = FLAGS.model_path
   myflags["train_state_file"] = FLAGS.train_state_file
+  myflags["train_loss_file"] = FLAGS.train_loss_file
 
   # Read metadata
   if FLAGS.mode == 'train':
