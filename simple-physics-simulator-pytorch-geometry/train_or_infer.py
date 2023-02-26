@@ -5,7 +5,10 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import MessagePassing, radius_graph
+from torch_geometric.nn import MessagePassing, radius_graph, knn_graph
+from sklearn.cluster import KMeans
+
+import settings #hyper_edge settings used in graph construction
 
 from torch.utils.tensorboard import SummaryWriter
 os.makedirs('train_log', exist_ok=True)
@@ -256,13 +259,8 @@ class Simulator(nn.Module):
     def forward(self):
         pass
 
-    def _build_graph_from_raw(self, position_sequence, n_particles_per_example, particle_types, return_incidence_matrix = False, hyper_edge_set = True):
-        # Added Return Incidence Matrix,
-        # If false, _build_graph_from_raw returns Ex2 matrix of node indexes.
-        # If true, _build_graph_from_raw returns NxE incidence matrix of hyper edges.
-        
-        #hyper_edge_set - if true returns a hyper-edge for every normal edge.
-        # e.g. edges ((1,2),(3,4)) become ([1,2,3,4],[0,0,1,1])
+    def _build_graph_from_raw(self, position_sequence, n_particles_per_example, particle_types):
+        # The standard implementaiton of buildign a graph from raw
 
         n_total_points = position_sequence.shape[0]
         most_recent_position = position_sequence[:, -1] # (n_nodes, 2)
@@ -306,35 +304,62 @@ class Simulator(nn.Module):
         normalized_relative_distances = torch.norm(normalized_relative_displacements, dim=-1, keepdim=True)
         edge_features.append(normalized_relative_distances)
         
-        if return_incidence_matrix:
-            #each hyperedge will connect the sender to all recievers. There will be a total of #(nr nodes) hyper-edges. This might mean some duplicate hyper-edges
-            incidence_matrix = torch.zeros((n_total_points, n_total_points))
-            for idx, sender in enumerate(senders):
-                receiver = receivers[idx]
-                incidence_matrix[sender][receiver] = 1
-            return torch.cat(node_features, dim=-1), incidence_matrix, torch.cat(edge_features, dim=-1)
-        if hyper_edge_set:
-            #loopless implementation of returning hyperedge set
-            #hyper edge set will return x by 2 matrix.
-            n_total_edges = senders.shape[0]
-            top = torch.zeros((n_total_edges*2)).to(torch.int64)                 #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
-            bot = torch.tensor(np.floor(np.arange(0, n_total_edges, 0.5)))       #(0,0,1,1,2,2,...)     - hyper-edge indexes.
-            idx_send = list(range(0,2*n_total_edges,2))
-            idx_rec  = list(range(1,2*n_total_edges,2))
-            top[idx_send]=senders
-            top[idx_rec]=receivers
-            top = top.reshape(-1,1)
-            bot = bot.reshape(-1,1)
-            return (torch.cat(node_features, dim=-1),
-                    torch.cat((top, bot), dim=-1),
-                    torch.cat(edge_features, dim=-1))
-
-
         return torch.cat(node_features, dim=-1), torch.stack([senders, receivers]), torch.cat(edge_features, dim=-1)
     
+    def _build_hypergraph_from_raw(self, position_sequence, n_particles_per_example, particle_types):
+        # Build hypergraph as done in https://www.ijcai.org/proceedings/2019/0366.pdf The method uses both KNN and K means clustering
+        # Algorithm 1 (Hypergraph construction) This is different from using a connectivity radius, we can incorporate this in future
+        # returns node features.                                Shape: (n x f)
+        # hyper edges ((1,2),(e2),(e3),...),(0,0,1,1,2,2,...).  Shape: (k x 2) #k - number of hyper edges * number of edges per hyper edge
+        # hyper edge features                                   Shape: (e x f) #e - nr hyperedges. f - nr of hyperfeatures per edge.
+
+        n_total_points = position_sequence.shape[0]
+        most_recent_position = position_sequence[:, -1] # (n_nodes, 2)
+        velocity_sequence = time_diff(position_sequence)
+        # senders and receivers are integers of shape (E,)
+        hyper_edge_set, nr_edges = self._compute_hyper_connectivity(most_recent_position, n_particles_per_example, self._connectivity_radius) # retruns k x 2 edge matrix and nr edges.
+        
+        node_features = []
+        # Normalized velocity sequence, merging spatial an time axis.
+        velocity_stats = self._normalization_stats["velocity"]
+        normalized_velocity_sequence = (velocity_sequence - velocity_stats['mean']) / velocity_stats['std']
+        flat_velocity_sequence = normalized_velocity_sequence.view(n_total_points, -1)
+        node_features.append(flat_velocity_sequence)
+
+        # Normalized clipped distances to lower and upper boundaries.
+        # boundaries are an array of shape [num_dimensions, 2], where the second
+        # axis, provides the lower/upper boundaries.
+        boundaries = torch.tensor(self._boundaries, requires_grad=False).float().to(self._device)
+        distance_to_lower_boundary = (most_recent_position - boundaries[:, 0][None])
+        distance_to_upper_boundary = (boundaries[:, 1][None] - most_recent_position)
+        distance_to_boundaries = torch.cat([distance_to_lower_boundary, distance_to_upper_boundary], dim=1)
+        normalized_clipped_distance_to_boundaries = torch.clamp(distance_to_boundaries / self._connectivity_radius, -1., 1.)
+        node_features.append(normalized_clipped_distance_to_boundaries)
+
+        if self._num_particle_types > 1:
+            particle_type_embeddings = self._particle_type_embedding(particle_types)
+            node_features.append(particle_type_embeddings)
+        # Collect edge features.
+        nr_edge_features = 2+2+10 #2 for cluster centre (x,y), 2 for cluster std dev (x,y), 10 for cluster velocity.
+        edge_features = torch.zeros((nr_edges, nr_edge_features)).to(self._device)
+        for i in range(nr_edges):
+            e_id = (hyper_edge_set[1,:] == i).nonzero()    #get node idxs in edge
+            n_id = hyper_edge_set[0,e_id]                  #get node idxs
+            n_id_p = most_recent_position[n_id].squeeze()  #most recent positions (nx2)
+            n_id_v = flat_velocity_sequence[n_id].squeeze()#most recent vels (x,y) over 5 timesteps (nx10)
+            # position metrics
+            e_f_centre = n_id_p.mean(dim=0)               #edge feature centre
+            e_f_std    = n_id_p.std(dim=0)                #standard deviations
+            # velocity metrics
+            e_f_vel    = n_id_v.mean(dim=0)               #get relative velocity of the cluster
+            # all features
+            e_f_all    = torch.cat([e_f_centre, e_f_std, e_f_vel])
+            edge_features[i,:] = e_f_all
+        return torch.cat(node_features, dim=-1), hyper_edge_set, edge_features
+    
+
     def _compute_connectivity(self, node_features, n_particles_per_example, radius, add_self_edges=True):
         # handle batches. Default is 2 examples per batch
-
         # Specify examples id for particles/points
         batch_ids = torch.cat([torch.LongTensor([i for _ in range(n)]) for i, n in enumerate(n_particles_per_example)]).to(self._device)
         # radius = radius + 0.00001 # radius_graph takes r < radius not r <= radius
@@ -342,6 +367,30 @@ class Simulator(nn.Module):
         receivers = edge_index[0, :]
         senders = edge_index[1, :]
         return receivers, senders
+    
+    def _compute_hyper_connectivity(self, node_features, n_particles_per_example, radius, add_self_edges=True):
+        # returns 2xk hyperedge matrix, nr_edges. Does it based on KNN and KMeans clustering as described in the paper.
+        batch_ids = torch.cat([torch.LongTensor([i for _ in range(n)]) for i, n in enumerate(n_particles_per_example)]).to(self._device)
+        top_s = settings.top_s
+        nr_cl = settings.k_m_cl #nr clusters
+        knn   = settings.k_nn_nr #nr k nearest neighbours
+        clustering = KMeans(n_clusters=nr_cl).fit(node_features) # init with k_m_cl cluster. Node features = nr_nodes, 2
+        nr_hyperedges = node_features.shape[0] + nr_cl #nr_nodes + nr_clusters
+        hyperedge_dim = node_features.shape[0] * knn + nr_cl * top_s #each node has knn neighbours + each cluster has top S closest nodes. 
+        hyperedge_matrix = torch.zeros((2,hyperedge_dim)).to(torch.int64)
+        #get KNN nodes to each centre
+        for i in range(nr_cl):
+            centre = clustering.cluster_centers_[i]
+            dists = (node_features - centre)
+            dists = (dists*dists).sum(dim=1)    # squared dist is equally good as nonsquared dist
+            closest_nodes = torch.topk(dists, k=top_s) #top_nodes.indices
+            hyperedge_matrix[0,i*top_s:(i+1)*top_s] = closest_nodes.indices
+            hyperedge_matrix[1,i*top_s:(i+1)*top_s] = i
+        end_pos = (i+1)*top_s
+        edge_index = knn_graph(node_features, k=knn, batch=batch_ids, loop=add_self_edges) # get k nearest neighbours
+        hyperedge_matrix[0,end_pos:] = edge_index[0,:]
+        hyperedge_matrix[1,end_pos:] = edge_index[1,:]+i+1
+        return hyperedge_matrix, nr_hyperedges #hyperedge_matrix[:,-1] = nr_hyperedges :)
 
     def _decoder_postprocessor(self, normalized_acceleration, position_sequence):
         # The model produces the output in normalized space so we apply inverse
@@ -368,7 +417,10 @@ class Simulator(nn.Module):
 
     def predict_accelerations(self, next_position, position_sequence_noise, position_sequence, n_particles_per_example, particle_types):
         noisy_position_sequence = position_sequence + position_sequence_noise
-        node_features, edge_index, e_features = self._build_graph_from_raw(noisy_position_sequence, n_particles_per_example, particle_types)
+        if settings.return_hyperedges:#build hypergraph
+            node_features, edge_index, e_features = self._build_hypergraph_from_raw(noisy_position_sequence, n_particles_per_example, particle_types)
+        else:
+            node_features, edge_index, e_features = self._build_graph_from_raw(noisy_position_sequence, n_particles_per_example, particle_types)
         predicted_normalized_acceleration = self._encode_process_decode(node_features, edge_index, e_features)
         next_position_adjusted = next_position + position_sequence_noise[:, -1]
         target_normalized_acceleration = self._inverse_decoder_postprocessor(next_position_adjusted, noisy_position_sequence)
