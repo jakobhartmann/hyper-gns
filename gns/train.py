@@ -47,6 +47,7 @@ flags.DEFINE_integer("cuda_device_number", None, help="CUDA device (zero indexed
 # Logger
 flags.DEFINE_boolean('use_wandb', default = True, help = 'Whether or not to use Weights & Biases for experiment tracking.')
 flags.DEFINE_string('wandb_project', default = 'hypergraph-physics', help = 'Weights & Biases project name.')
+flags.DEFINE_string('wandb_entity', default = 'camb-mphil', help = 'Weights & Biases entity.')
 
 Stats = collections.namedtuple('Stats', ['mean', 'std'])
 
@@ -198,7 +199,7 @@ def train(rank, flags, world_size):
 
   if rank == 0:
     # Initialize logger
-    logger = logging.Logger(use_wandb = flags['use_wandb'], project = flags['wandb_project'], config = flags)
+    logger = logging.Logger(use_wandb = flags['use_wandb'], wandb_project = flags['wandb_project'], wandb_entity = flags['wandb_entity'], config = flags)
 
   # If model_path does exist and model_file and train_state_file exist continue training.
   if flags["model_file"] is not None:
@@ -380,6 +381,9 @@ def main(_):
   myflags["model_file"] = FLAGS.model_file
   myflags["model_path"] = FLAGS.model_path
   myflags["train_state_file"] = FLAGS.train_state_file
+  myflags["use_wandb"] = FLAGS.use_wandb
+  myflags["wandb_project"] = FLAGS.wandb_project
+  myflags["wandb_entity"] = FLAGS.wandb_entity
 
   # Read metadata
   if FLAGS.mode == 'train':

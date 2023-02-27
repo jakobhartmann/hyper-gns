@@ -1,10 +1,10 @@
 import wandb
 
 class Logger:
-    def __init__(self, use_wandb, project = None, config = None):
+    def __init__(self, use_wandb, wandb_project = None, wandb_entity = None, config = None):
         self.use_wandb = use_wandb
         if use_wandb:
-            wandb.init(project = project, config = config)
+            wandb.init(project = wandb_project, entity = wandb_entity, config = config)
 
     def log(self, data, step = None):
         if self.use_wandb:
