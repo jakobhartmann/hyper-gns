@@ -200,8 +200,27 @@ class LearnedSimulator(nn.Module):
       bot = bot.reshape(-1,1)
       hyper_edge_indices = torch.transpose(torch.cat((top, bot), dim=-1), 0, 1)
 
+      # Calculate hyperedge list for arbitrary hyperedge size
+      '''hyper_edge_list, new_hyperedge = [], []
+      max_idx = 0
+
+      for i in range(hyper_edge_indices.shape[1]):
+        cur_value, cur_idx = hyper_edge_indices[:, i]
+
+        if cur_idx <= max_idx:
+          new_hyperedge.append(cur_value)
+        else:
+          hyper_edge_list.append(new_hyperedge)
+          new_hyperedge = [cur_value]
+          max_idx += 1
+
+      hyper_edge_list.append(new_hyperedge)'''
+
+      # Calculate hyperedge list for 2-uniform hyperedges
+      hyper_edge_list = np.split(hyper_edge_indices[0], nr_edges)
+
       return (torch.cat(node_features, dim=-1),
-              hyper_edge_indices,
+              hyper_edge_list,
               torch.cat(edge_features, dim=-1))
 
     return (torch.cat(node_features, dim=-1),
