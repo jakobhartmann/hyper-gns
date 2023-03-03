@@ -350,7 +350,7 @@ def _get_simulator(
       nnode_in=37 if metadata['dim'] == 3 else 30,
       nedge_in=29,#metadata['dim'] + 1
       latent_dim=128,
-      nmessage_passing_steps=1,#10
+      nmessage_passing_steps=10,
       nmlp_layers=2,
       mlp_hidden_dim=128,
       connectivity_radius=metadata['default_connectivity_radius'],
