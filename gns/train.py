@@ -20,6 +20,7 @@ from gns import noise_utils
 from gns import reading_utils
 from gns import data_loader
 from gns import distribute
+from gns import settings
 from utils import logging
 
 flags.DEFINE_enum(
@@ -343,12 +344,13 @@ def _get_simulator(
       },
   }
 
-  simulator = learned_simulator.LearnedSimulator(
+  if settings.return_hyperedges:#if we are using hyperedge, we have 29 edge features. 
+    simulator = learned_simulator.LearnedSimulator(
       particle_dimensions=metadata['dim'],
       nnode_in=37 if metadata['dim'] == 3 else 30,
-      nedge_in=metadata['dim'] + 1,
+      nedge_in=29,#metadata['dim'] + 1
       latent_dim=128,
-      nmessage_passing_steps=10,
+      nmessage_passing_steps=1,#10
       nmlp_layers=2,
       mlp_hidden_dim=128,
       connectivity_radius=metadata['default_connectivity_radius'],
@@ -357,6 +359,21 @@ def _get_simulator(
       nparticle_types=NUM_PARTICLE_TYPES,
       particle_type_embedding_size=16,
       device=device)
+  else:
+    simulator = learned_simulator.LearnedSimulator(
+        particle_dimensions=metadata['dim'],
+        nnode_in=37 if metadata['dim'] == 3 else 30,
+        nedge_in=metadata['dim'] + 1,
+        latent_dim=128,
+        nmessage_passing_steps=1,#10
+        nmlp_layers=2,
+        mlp_hidden_dim=128,
+        connectivity_radius=metadata['default_connectivity_radius'],
+        boundaries=np.array(metadata['bounds']),
+        normalization_stats=normalization_stats,
+        nparticle_types=NUM_PARTICLE_TYPES,
+        particle_type_embedding_size=16,
+        device=device)
 
   return simulator
 

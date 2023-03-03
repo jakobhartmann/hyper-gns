@@ -491,7 +491,7 @@ class HyperGraphProcessor(nn.Module):
               x: torch.tensor,
               edge_features: torch.tensor,
               hg: dhg.Hypergraph):
-
+    
     for hnn in self.hnn_stacks:
       x, edge_features = hnn(x, edge_features, hg)
     return x, edge_features

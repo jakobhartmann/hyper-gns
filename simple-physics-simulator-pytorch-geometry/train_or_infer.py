@@ -357,7 +357,6 @@ class Simulator(nn.Module):
         e_ftrs_vel_std = scatter_std(e_ftrs_vel, hyper_edge_set[1,:], dim=0)
         #concat them all :)
         edge_features = torch.cat((e_ftrs_pos_mean, e_ftrs_pos_std, e_ftrs_pos_max, e_ftrs_pos_min, e_ftrs_area, e_ftrs_vel_mean, e_ftrs_vel_std),dim=-1)#
-
         breakpoint()
         return torch.cat(node_features, dim=-1), hyper_edge_set, edge_features
     

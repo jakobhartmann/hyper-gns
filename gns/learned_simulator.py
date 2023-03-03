@@ -2,7 +2,9 @@ import torch
 import torch.nn as nn
 import numpy as np
 from gns import graph_network
-from torch_geometric.nn import radius_graph
+from torch_geometric.nn import MessagePassing, radius_graph, knn_graph
+from sklearn.cluster import KMeans
+from torch_scatter import scatter_mean, scatter_std, scatter_max, scatter_min
 from typing import Dict
 import settings
 
@@ -105,6 +107,36 @@ class LearnedSimulator(nn.Module):
 
     return receivers, senders
 
+  def _compute_graph_connectivity_hypergraph(
+          self,
+          node_features: torch.tensor,
+          nparticles_per_example: torch.tensor,
+          radius: float,
+          add_self_edges: bool = True):
+        # returns 2xk hyperedge matrix, nr_edges. Does it based on KNN and KMeans clustering as described in the paper.
+        batch_ids = torch.cat([torch.LongTensor([i for _ in range(n)]) for i, n in enumerate(nparticles_per_example)]).to(self._device)
+        top_s = settings.top_s
+        nr_cl = settings.k_m_cl #nr clusters
+        knn   = settings.k_nn_nr #nr k nearest neighbours
+        clustering = KMeans(n_clusters=nr_cl).fit(node_features.cpu()) # init with k_m_cl cluster. Node features = nr_nodes, 2
+        nr_hyperedges = node_features.shape[0] + nr_cl #nr_nodes + nr_clusters
+        hyperedge_dim = node_features.shape[0] * knn + nr_cl * top_s #each node has knn neighbours + each cluster has top S closest nodes. 
+        hyperedge_matrix = torch.zeros((2,hyperedge_dim)).to(torch.int64)
+        #get KNN nodes to each centre
+        for i in range(nr_cl):
+            centre = torch.tensor(clustering.cluster_centers_[i]).to(self._device)
+            dists = (node_features - centre)
+            dists = (dists*dists).sum(dim=1)    # squared dist is equally good as nonsquared dist
+            closest_nodes = torch.topk(dists, k=top_s) #top_nodes.indices
+            hyperedge_matrix[0,i*top_s:(i+1)*top_s] = closest_nodes.indices
+            hyperedge_matrix[1,i*top_s:(i+1)*top_s] = i
+        end_pos = (i+1)*top_s
+        edge_index = knn_graph(node_features, k=knn, batch=batch_ids, loop=add_self_edges) # get k nearest neighbours
+        hyperedge_matrix[0,end_pos:] = edge_index[0,:]
+        hyperedge_matrix[1,end_pos:] = edge_index[1,:]+i+1
+        return hyperedge_matrix.to(self._device), nr_hyperedges
+
+
   def _encoder_preprocessor(
           self,
           position_sequence: torch.tensor,
@@ -121,6 +153,7 @@ class LearnedSimulator(nn.Module):
         examples per batch.
       particle_types: Particle types with shape (nparticles).
     """
+
     nparticles = position_sequence.shape[0]
     most_recent_position = position_sequence[:, -1]  # (n_nodes, 2)
     velocity_sequence = time_diff(position_sequence)
@@ -217,10 +250,9 @@ class LearnedSimulator(nn.Module):
           max_idx += 1
 
       hyper_edge_list.append(new_hyperedge)'''
-
+      
       # Calculate hyperedge list for 2-uniform hyperedges
       hyper_edge_list = np.split(hyper_edge_indices[0], nr_edges)
-
       return (torch.cat(node_features, dim=-1),
               hyper_edge_list,
               torch.cat(edge_features, dim=-1))
@@ -228,6 +260,68 @@ class LearnedSimulator(nn.Module):
     return (torch.cat(node_features, dim=-1),
             torch.stack([senders, receivers]),
             torch.cat(edge_features, dim=-1))
+
+
+  def _encoder_preprocessor_hypergraph(#_build_graph_from_raw
+          self,
+          position_sequence: torch.tensor,
+          nparticles_per_example: torch.tensor,
+          particle_types: torch.tensor):
+      # Build hypergraph as done in https://www.ijcai.org/proceedings/2019/0366.pdf The method uses both KNN and K means clustering
+      # Algorithm 1 (Hypergraph construction) This is different from using a connectivity radius, we can incorporate this in future
+      # returns node features.                                Shape: (n x f)
+      # hyper edges ((1,2),(e2),(e3),...),(0,0,1,1,2,2,...).  Shape: (k x 2) #k - number of hyper edges * number of edges per hyper edge
+      # hyper edge features                                   Shape: (e x f) #e - nr hyperedges. f - nr of hyperfeatures per edge.
+      n_total_points = position_sequence.shape[0]
+      most_recent_position = position_sequence[:, -1] # (n_nodes, 2)
+      velocity_sequence = time_diff(position_sequence)
+      # senders and receivers are integers of shape (E,)
+      hyper_edge_set, nr_edges = self._compute_graph_connectivity_hypergraph(most_recent_position, nparticles_per_example, self._connectivity_radius) # retruns k x 2 edge matrix and nr edges.
+      node_features = []
+      # Normalized velocity sequence, merging spatial an time axis.
+      velocity_stats = self._normalization_stats["velocity"]
+      normalized_velocity_sequence = (velocity_sequence - velocity_stats['mean']) / velocity_stats['std']
+      flat_velocity_sequence = normalized_velocity_sequence.view(n_total_points, -1)
+      node_features.append(flat_velocity_sequence)
+
+      # Normalized clipped distances to lower and upper boundaries.
+      # boundaries are an array of shape [num_dimensions, 2], where the second
+      # axis, provides the lower/upper boundaries.
+      boundaries = torch.tensor(self._boundaries, requires_grad=False).float().to(self._device)
+      distance_to_lower_boundary = (most_recent_position - boundaries[:, 0][None])
+      distance_to_upper_boundary = (boundaries[:, 1][None] - most_recent_position)
+      distance_to_boundaries = torch.cat([distance_to_lower_boundary, distance_to_upper_boundary], dim=1)
+      normalized_clipped_distance_to_boundaries = torch.clamp(distance_to_boundaries / self._connectivity_radius, -1., 1.)
+      node_features.append(normalized_clipped_distance_to_boundaries)
+
+      if self._nparticle_types > 1:
+          particle_type_embeddings = self._particle_type_embedding(particle_types)
+          node_features.append(particle_type_embeddings)
+      # HYPEREDGE FEATURES
+      #Position features (mean, std)
+      e_ftrs_pos = torch.index_select(most_recent_position, 0, hyper_edge_set[0,:])
+      e_ftrs_pos_mean = scatter_mean(e_ftrs_pos, hyper_edge_set[1,:], dim=0)#ex2 (x,y) (Midpoints)
+      e_ftrs_pos_std = scatter_std(e_ftrs_pos, hyper_edge_set[1,:], dim=0)
+      #Box features (minx, miny, maxx, maxy)
+      e_ftrs_pos_max = scatter_max(e_ftrs_pos, hyper_edge_set[1,:], dim=0)[0]#[0] = get the values, [1] = get indices of nodes which give maximum
+      e_ftrs_pos_min = scatter_min(e_ftrs_pos, hyper_edge_set[1,:], dim=0)[0]
+      #Area 
+      e_ftrs_area = (e_ftrs_pos_max-e_ftrs_pos_min)#xy diff
+      e_ftrs_area = (e_ftrs_area[:,0] * e_ftrs_area[:,1]).reshape(-1,1)
+      #Velocity features (mean, std) last 5 time-steps
+      e_ftrs_vel = torch.index_select(flat_velocity_sequence, 0, hyper_edge_set[0,:])#
+      e_ftrs_vel_mean = scatter_mean(e_ftrs_vel, hyper_edge_set[1,:], dim=0)#ex10 5 timesteps * 2 coordinates
+      e_ftrs_vel_std = scatter_std(e_ftrs_vel, hyper_edge_set[1,:], dim=0)
+      #concat them all :)
+      edge_features = torch.cat((e_ftrs_pos_mean, e_ftrs_pos_std, e_ftrs_pos_max, e_ftrs_pos_min, e_ftrs_area, e_ftrs_vel_mean, e_ftrs_vel_std),dim=-1)
+      # The expected output (hyper_edge_set) is a list
+      # curr a for loop
+      indices_list = []
+      for idx in range(torch.max(hyper_edge_set[1,:])):
+        indices_list.append((hyper_edge_set[1,:]==idx).nonzero())
+      return torch.cat(node_features, dim=-1), indices_list, edge_features#hyper_edge_set
+
+
 
   def _decoder_postprocessor(
           self,
@@ -277,10 +371,15 @@ class LearnedSimulator(nn.Module):
     Returns:
       next_positions (torch.tensor): Next position of particles.
     """
-    node_features, edge_index, edge_features = self._encoder_preprocessor(
+    
+    if settings.return_hyperedges:
+      node_features, edge_index, edge_features = self._encoder_preprocessor_hypergraph(
+        current_positions, nparticles_per_example, particle_types)
+    else:
+      node_features, edge_index, edge_features = self._encoder_preprocessor(
         current_positions, nparticles_per_example, particle_types)
     predicted_normalized_acceleration = self._encode_process_decode(
-        node_features, edge_index, edge_features)
+      node_features, edge_index, edge_features)
     next_positions = self._decoder_postprocessor(
         predicted_normalized_acceleration, current_positions)
     return next_positions
@@ -315,7 +414,11 @@ class LearnedSimulator(nn.Module):
     noisy_position_sequence = position_sequence + position_sequence_noise
 
     # Perform the forward pass with the noisy position sequence.
-    node_features, edge_index, edge_features = self._encoder_preprocessor(
+    if settings.return_hyperedges:
+      node_features, edge_index, edge_features = self._encoder_preprocessor_hypergraph(
+        noisy_position_sequence, nparticles_per_example, particle_types)
+    else:
+      node_features, edge_index, edge_features = self._encoder_preprocessor(
         noisy_position_sequence, nparticles_per_example, particle_types)
     predicted_normalized_acceleration = self._encode_process_decode(
         node_features, edge_index, edge_features)

@@ -10,8 +10,10 @@ settings_kmeans_clustering  = False # Split nodes into k clusters
 
 
 # Shared Settings
-k_nn_nr = 4                 #number of k nearest neighbours to use
-connectivity_radius = 0.015 #
-nr_clusters = 6             #number of clusters
+k_nn_nr = 4     #number of k nearest neighbours to use
+k_m_cl  = 6     #number of clusters
+con_rad = 0.015 #connectivity radius
+top_s   = 10    #number of nodes to keep 
+
 
 ### End Hyper-edge Calculation ###
