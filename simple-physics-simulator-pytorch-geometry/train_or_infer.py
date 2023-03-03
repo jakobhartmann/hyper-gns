@@ -7,6 +7,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing, radius_graph, knn_graph
 from sklearn.cluster import KMeans
+from torch_scatter import scatter_mean, scatter_std, scatter_max, scatter_min
 
 import settings #hyper_edge settings used in graph construction
 
@@ -339,22 +340,25 @@ class Simulator(nn.Module):
         if self._num_particle_types > 1:
             particle_type_embeddings = self._particle_type_embedding(particle_types)
             node_features.append(particle_type_embeddings)
-        # Collect edge features.
-        nr_edge_features = 2+2+10 #2 for cluster centre (x,y), 2 for cluster std dev (x,y), 10 for cluster velocity.
-        edge_features = torch.zeros((nr_edges, nr_edge_features)).to(self._device)
-        for i in range(nr_edges):
-            e_id = (hyper_edge_set[1,:] == i).nonzero()    #get node idxs in edge
-            n_id = hyper_edge_set[0,e_id]                  #get node idxs
-            n_id_p = most_recent_position[n_id].squeeze()  #most recent positions (nx2)
-            n_id_v = flat_velocity_sequence[n_id].squeeze()#most recent vels (x,y) over 5 timesteps (nx10)
-            # position metrics
-            e_f_centre = n_id_p.mean(dim=0)               #edge feature centre
-            e_f_std    = n_id_p.std(dim=0)                #standard deviations
-            # velocity metrics
-            e_f_vel    = n_id_v.mean(dim=0)               #get relative velocity of the cluster
-            # all features
-            e_f_all    = torch.cat([e_f_centre, e_f_std, e_f_vel])
-            edge_features[i,:] = e_f_all
+        # HYPEREDGE FEATURES
+        #Position features (mean, std)
+        e_ftrs_pos = torch.index_select(most_recent_position, 0, hyper_edge_set[0,:])
+        e_ftrs_pos_mean = scatter_mean(e_ftrs_pos, hyper_edge_set[1,:], dim=0)#ex2 (x,y) (Midpoints)
+        e_ftrs_pos_std = scatter_std(e_ftrs_pos, hyper_edge_set[1,:], dim=0)
+        #Box features (minx, miny, maxx, maxy)
+        e_ftrs_pos_max = scatter_max(e_ftrs_pos, hyper_edge_set[1,:], dim=0)[0]#[0] = get the values, [1] = get indices of nodes which give maximum
+        e_ftrs_pos_min = scatter_min(e_ftrs_pos, hyper_edge_set[1,:], dim=0)[0]
+        #Area 
+        e_ftrs_area = (e_ftrs_pos_max-e_ftrs_pos_min)#xy diff
+        e_ftrs_area = (e_ftrs_area[:,0] * e_ftrs_area[:,1]).reshape(-1,1)
+        #Velocity features (mean, std) last 5 time-steps
+        e_ftrs_vel = torch.index_select(flat_velocity_sequence, 0, hyper_edge_set[0,:])#
+        e_ftrs_vel_mean = scatter_mean(e_ftrs_vel, hyper_edge_set[1,:], dim=0)#ex10 5 timesteps * 2 coordinates
+        e_ftrs_vel_std = scatter_std(e_ftrs_vel, hyper_edge_set[1,:], dim=0)
+        #concat them all :)
+        edge_features = torch.cat((e_ftrs_pos_mean, e_ftrs_pos_std, e_ftrs_pos_max, e_ftrs_pos_min, e_ftrs_area, e_ftrs_vel_mean, e_ftrs_vel_std),dim=-1)#
+
+        breakpoint()
         return torch.cat(node_features, dim=-1), hyper_edge_set, edge_features
     
 

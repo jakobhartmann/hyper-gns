@@ -4,6 +4,8 @@ import numpy as np
 from gns import graph_network
 from torch_geometric.nn import radius_graph
 from typing import Dict
+import settings
+
 
 hyper_edge_set = True
 class LearnedSimulator(nn.Module):
@@ -103,7 +105,7 @@ class LearnedSimulator(nn.Module):
 
     return receivers, senders
 
-  def _encoder_preprocessor(#_build_graph_from_raw
+  def _encoder_preprocessor(
           self,
           position_sequence: torch.tensor,
           nparticles_per_example: torch.tensor,
