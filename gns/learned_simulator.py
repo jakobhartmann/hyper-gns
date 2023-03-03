@@ -116,7 +116,7 @@ class LearnedSimulator(nn.Module):
         # returns 2xk hyperedge matrix, nr_edges. Does it based on KNN and KMeans clustering as described in the paper.
         batch_ids = torch.cat([torch.LongTensor([i for _ in range(n)]) for i, n in enumerate(nparticles_per_example)]).to(self._device)
         top_s = settings.top_s
-        nr_cl = settings.k_m_cl #nr clusters
+        nr_cl = settings.k_m_cl  #nr clusters
         knn   = settings.k_nn_nr #nr k nearest neighbours
         clustering = KMeans(n_clusters=nr_cl).fit(node_features.cpu()) # init with k_m_cl cluster. Node features = nr_nodes, 2
         nr_hyperedges = node_features.shape[0] + nr_cl #nr_nodes + nr_clusters
@@ -132,8 +132,8 @@ class LearnedSimulator(nn.Module):
             hyperedge_matrix[1,i*top_s:(i+1)*top_s] = i
         end_pos = (i+1)*top_s
         edge_index = knn_graph(node_features, k=knn, batch=batch_ids, loop=add_self_edges) # get k nearest neighbours
-        hyperedge_matrix[0,end_pos:] = edge_index[0,:]
-        hyperedge_matrix[1,end_pos:] = edge_index[1,:]+i+1
+        hyperedge_matrix[0,end_pos:] = edge_index[0,:]#nodes
+        hyperedge_matrix[1,end_pos:] = edge_index[1,:]+i+1#edges
         return hyperedge_matrix.to(self._device), nr_hyperedges
 
 
@@ -317,8 +317,8 @@ class LearnedSimulator(nn.Module):
       # The expected output (hyper_edge_set) is a list
       # curr a for loop
       indices_list = []
-      for idx in range(torch.max(hyper_edge_set[1,:])):
-        indices_list.append((hyper_edge_set[1,:]==idx).nonzero())
+      for idx in range(nr_edges):
+        indices_list.append( hyper_edge_set[0,hyper_edge_set[1,:]==idx] ) # (hyper_edge_set[0,:]==idx).nonzero()
       return torch.cat(node_features, dim=-1), indices_list, edge_features#hyper_edge_set
 
 
