@@ -201,7 +201,7 @@ def train(rank, flags, world_size):
   if rank == 0:
     # Initialize logger
     logger = logging.Logger(use_wandb = flags['use_wandb'], wandb_project = flags['wandb_project'], wandb_entity = flags['wandb_entity'], config = flags)
-    train_loss = torch.tensor([])
+    train_loss = torch.tensor([]).to(rank)
 
   # If model_path does exist and model_file and train_state_file exist continue training.
   if flags["model_file"] is not None:
@@ -289,11 +289,11 @@ def train(rank, flags, world_size):
 
         if rank == 0:
           print(f'Training step: {step}/{flags["ntraining_steps"]}. Loss: {loss}.')
-          train_loss = torch.cat((train_loss, loss))
+          train_loss = torch.cat((train_loss, torch.tensor([loss]).to(rank)))
 
           if step % flags["train_log_frequency"] == 0:
             logger.log(data = {'train_loss': torch.mean(train_loss)}, step = step)
-            train_loss = torch.tensor([])
+            train_loss = torch.tensor([]).to(rank)
 
         # Save model state
         if step % flags["nsave_steps"] == 0 and rank == 0:
