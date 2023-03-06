@@ -24,7 +24,7 @@ from gns import settings
 from utils import logging
 
 flags.DEFINE_enum(
-    'mode', 'train', ['train', 'valid', 'rollout'],
+    'mode', 'train', ['train', 'valid', 'rollout', 'rollout_multiple'],
     help='Train model, validation or rollout evaluation.')
 flags.DEFINE_integer('batch_size', 2, help='The batch size.')
 flags.DEFINE_float('noise_std', 6.7e-4, help='The std deviation of the noise.')
@@ -49,6 +49,10 @@ flags.DEFINE_integer("cuda_device_number", None, help="CUDA device (zero indexed
 flags.DEFINE_boolean('use_wandb', default = True, help = 'Whether or not to use Weights & Biases for experiment tracking.')
 flags.DEFINE_string('wandb_project', default = 'hypergraph-physics', help = 'Weights & Biases project name.')
 flags.DEFINE_string('wandb_entity', default = 'camb-mphil', help = 'Weights & Biases entity.')
+
+# Rollout
+flags.DEFINE_multi_integer('model_step_list', default = [0, 25000, 50000, 75000, 100000], help = 'List of steps corresponding to model checkpoints used to perform rollout prediction.')
+
 
 Stats = collections.namedtuple('Stats', ['mean', 'std'])
 
@@ -167,6 +171,70 @@ def predict(device: str, FLAGS):
 
   print("Mean loss on rollout prediction: {}".format(
       torch.mean(torch.cat(eval_loss))))
+  
+
+def predict_multiple(device: str, FLAGS):
+  """Predict rollouts for multiple models.
+
+  Args:
+    simulator: Trained simulator if not will undergo training.
+
+  """
+  metadata = reading_utils.read_metadata(FLAGS.data_path)
+  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device)
+
+  logger = logging.Logger(use_wandb = FLAGS.use_wandb, wandb_project = FLAGS.wandb_project, wandb_entity = FLAGS.wandb_entity, config = FLAGS)
+
+  for step in FLAGS.model_step_list:
+    model_file = os.path.join(FLAGS.model_path, 'model-' + str(step) + '.pt')
+    output_path = os.path.join(FLAGS.output_path, str(step))
+
+    # Load simulator
+    if os.path.exists(model_file):
+      simulator.load(model_file)
+    else:
+      train(simulator)
+    
+    simulator.to(device)
+    simulator.eval()
+
+    # Output path
+    if not os.path.exists(output_path):
+      os.makedirs(output_path)
+
+    # Use `valid`` set for eval mode if not use `test`
+    split = 'test' if FLAGS.mode == 'rollout_multiple' else 'valid'
+
+    ds = data_loader.get_data_loader_by_trajectories(path=f"{FLAGS.data_path}{split}.npz")
+
+    eval_loss = []
+    with torch.no_grad():
+      for example_i, (positions, particle_type, n_particles_per_example) in enumerate(ds):
+        positions.to(device)
+        particle_type.to(device)
+        n_particles_per_example = torch.tensor([int(n_particles_per_example)], dtype=torch.int32).to(device)
+
+        nsteps = metadata['sequence_length'] - INPUT_SEQUENCE_LENGTH
+        # Predict example rollout
+        example_rollout, loss = rollout(simulator, positions.to(device), particle_type.to(device),
+                                        n_particles_per_example.to(device), nsteps, device)
+
+        example_rollout['metadata'] = metadata
+        print("Predicting example {} loss: {}".format(example_i, loss.mean()))
+        eval_loss.append(torch.flatten(loss))
+        
+        # Save rollout in testing
+        if FLAGS.mode == 'rollout_multiple':
+          example_rollout['metadata'] = metadata
+          filename = f'rollout_{example_i}.pkl'
+          filename = os.path.join(output_path, filename)
+          with open(filename, 'wb') as f:
+            pickle.dump(example_rollout, f)
+
+    mean_loss = torch.mean(torch.cat(eval_loss))
+    print("Mean loss on rollout prediction: {}".format(mean_loss))
+    logger.log(data = {'test_loss': mean_loss}, step = step)
+  
 
 def optimizer_to(optim, device):
   for param in optim.state.values():
@@ -404,6 +472,7 @@ def main(_):
   myflags["use_wandb"] = FLAGS.use_wandb
   myflags["wandb_project"] = FLAGS.wandb_project
   myflags["wandb_entity"] = FLAGS.wandb_entity
+  myflags["model_step_list"] = FLAGS.model_step_list
 
   # Read metadata
   if FLAGS.mode == 'train':
@@ -421,6 +490,13 @@ def main(_):
     if FLAGS.cuda_device_number is not None and torch.cuda.is_available():
       device = torch.device(f'cuda:{int(FLAGS.cuda_device_number)}')
     predict(device, FLAGS)
+  
+  elif FLAGS.mode == 'rollout_multiple':
+    # Set device
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if FLAGS.cuda_device_number is not None and torch.cuda.is_available():
+      device = torch.device(f'cuda:{int(FLAGS.cuda_device_number)}')
+    predict_multiple(device, FLAGS)
 
 if __name__ == '__main__':
   app.run(main)
