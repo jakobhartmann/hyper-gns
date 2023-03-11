@@ -7,7 +7,7 @@ from sklearn.cluster import KMeans
 from torch_scatter import scatter_mean, scatter_std, scatter_max, scatter_min
 from typing import Dict
 import settings
-
+import itertools
 
 hyper_edge_set = True
 class LearnedSimulator(nn.Module):
@@ -118,23 +118,32 @@ class LearnedSimulator(nn.Module):
         top_s = settings.top_s
         nr_cl = settings.k_m_cl  #nr clusters
         knn   = settings.k_nn_nr #nr k nearest neighbours
-        clustering = KMeans(n_clusters=nr_cl).fit(node_features.cpu()) # init with k_m_cl cluster. Node features = nr_nodes, 2
         nr_hyperedges = node_features.shape[0] + nr_cl #nr_nodes + nr_clusters
         hyperedge_dim = node_features.shape[0] * knn + nr_cl * top_s #each node has knn neighbours + each cluster has top S closest nodes. 
         hyperedge_matrix = torch.zeros((2,hyperedge_dim)).to(torch.int64)
+        clustering = KMeans(n_clusters=nr_cl).fit(node_features.cpu()) # init with k_m_cl cluster. Node features = nr_nodes, 2
         #get KNN nodes to each centre
         for i in range(nr_cl):
             centre = torch.tensor(clustering.cluster_centers_[i]).to(self._device)
             dists = (node_features - centre)
-            dists = (dists*dists).sum(dim=1)    # squared dist is equally good as nonsquared dist
+            dists = (dists*dists).sum(dim=1)           # squared dist is equally good as nonsquared dist
             closest_nodes = torch.topk(dists, k=top_s) #top_nodes.indices
             hyperedge_matrix[0,i*top_s:(i+1)*top_s] = closest_nodes.indices
             hyperedge_matrix[1,i*top_s:(i+1)*top_s] = i
-        end_pos = (i+1)*top_s
-        edge_index = knn_graph(node_features, k=knn, batch=batch_ids, loop=add_self_edges) # get k nearest neighbours
+        end_pos = nr_cl*top_s
+        edge_index = knn_graph(node_features, k=knn, batch=batch_ids, loop=add_self_edges) # get k nearest neighbours. what is batch
         hyperedge_matrix[0,end_pos:] = edge_index[0,:]#nodes
-        hyperedge_matrix[1,end_pos:] = edge_index[1,:]+i+1#edges
-        return hyperedge_matrix.to(self._device), nr_hyperedges
+        hyperedge_matrix[1,end_pos:] = edge_index[1,:]+nr_cl#edges
+
+        #precompute indices list. |ZOOOMMMMMM!!|
+        indices_clusters = torch.arange(nr_cl * top_s)
+        indices_clusters = hyperedge_matrix[0,indices_clusters]
+        indices_hyperedges = torch.arange(nr_cl * top_s, nr_cl * top_s + knn * node_features.shape[0])
+        indices_hyperedges = hyperedge_matrix[0,indices_hyperedges]
+        list_1 = list(torch.chunk(indices_clusters, nr_cl))#chunk returns a tuple of tensors. Thanks chatgpt
+        list_2 = list(torch.chunk(indices_hyperedges, node_features.shape[0]))
+        list_1.extend(list_2)
+        return hyperedge_matrix.to(self._device), nr_hyperedges, list_1
 
 
   def _encoder_preprocessor(
@@ -270,13 +279,16 @@ class LearnedSimulator(nn.Module):
       # Build hypergraph as done in https://www.ijcai.org/proceedings/2019/0366.pdf The method uses both KNN and K means clustering
       # Algorithm 1 (Hypergraph construction) This is different from using a connectivity radius, we can incorporate this in future
       # returns node features.                                Shape: (n x f)
-      # hyper edges ((1,2),(e2),(e3),...),(0,0,1,1,2,2,...).  Shape: (k x 2) #k - number of hyper edges * number of edges per hyper edge
+      # Indices List ((3,7,9),(2,1),(e3),(e4),...).           Shape: (e)     #where (3,7,9) are node idxs. 
       # hyper edge features                                   Shape: (e x f) #e - nr hyperedges. f - nr of hyperfeatures per edge.
+      # Currently 29 hyperedge features - pos: mean (2), std(2), max(2), min(2), "area(1)", vel: mean (5*2), std (5*2)
       n_total_points = position_sequence.shape[0]
+      #if True:
+      #  return torch.zeros((n_total_points,30)).to(torch.float32).to(self._device), [torch.zeros((6)).to(torch.int32) for i in range(n_total_points)], torch.zeros((n_total_points,29)).to(torch.float32).to(self._device)
       most_recent_position = position_sequence[:, -1] # (n_nodes, 2)
       velocity_sequence = time_diff(position_sequence)
       # senders and receivers are integers of shape (E,)
-      hyper_edge_set, nr_edges = self._compute_graph_connectivity_hypergraph(most_recent_position, nparticles_per_example, self._connectivity_radius) # retruns k x 2 edge matrix and nr edges.
+      hyper_edge_set, nr_edges, indices_list = self._compute_graph_connectivity_hypergraph(most_recent_position, nparticles_per_example, self._connectivity_radius) # retruns k x 2 edge matrix and nr edges.
       node_features = []
       # Normalized velocity sequence, merging spatial an time axis.
       velocity_stats = self._normalization_stats["velocity"]
@@ -314,11 +326,10 @@ class LearnedSimulator(nn.Module):
       e_ftrs_vel_std = scatter_std(e_ftrs_vel, hyper_edge_set[1,:], dim=0)
       #concat them all :)
       edge_features = torch.cat((e_ftrs_pos_mean, e_ftrs_pos_std, e_ftrs_pos_max, e_ftrs_pos_min, e_ftrs_area, e_ftrs_vel_mean, e_ftrs_vel_std),dim=-1)
-      # The expected output (hyper_edge_set) is a list
-      # curr a for loop
-      indices_list = []
-      for idx in range(nr_edges):
-        indices_list.append( hyper_edge_set[0,hyper_edge_set[1,:]==idx] ) # (hyper_edge_set[0,:]==idx).nonzero()
+      # Leaving the alternative implementation of indices_list
+      # indices_list=[]
+      # for idx in range(nr_edges):
+      #    indices_list.append( hyper_edge_set[0,hyper_edge_set[1,:]==idx] ) # (hyper_edge_set[0,:]==idx).nonzero()#indices_list = [torch.ones((6)).to(torch.int32)*max(i-12,0) for i in range(n_total_points+6)]
       return torch.cat(node_features, dim=-1), indices_list, edge_features#hyper_edge_set
 
 

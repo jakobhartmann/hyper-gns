@@ -13,6 +13,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 
 from absl import flags
 from absl import app
+import time
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from gns import learned_simulator
@@ -314,6 +315,8 @@ def train(rank, flags, world_size):
 
   print(f"rank = {rank}, cuda = {torch.cuda.is_available()}")
   not_reached_nsteps = True
+  start_time = time.time()
+  print("start_time", start_time)
   try:
     while not_reached_nsteps:
       torch.distributed.barrier()
@@ -385,7 +388,7 @@ def train(rank, flags, world_size):
     torch.save(train_state, f'{flags["model_path"]}train_state-{step}.pt')
 
   distribute.cleanup()
-
+  print("elapsed time: ", start_time - time.time())
 
 def _get_simulator(
         metadata: json,

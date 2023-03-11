@@ -15,5 +15,4 @@ k_m_cl  = 6     #number of clusters
 con_rad = 0.015 #connectivity radius
 top_s   = 10    #number of nodes to keep 
 
-
 ### End Hyper-edge Calculation ###
