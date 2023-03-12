@@ -440,8 +440,11 @@ class EncodeProcessDecode(nn.Module):
 
     # x, edge_features = self._simple_hypergcn(x = x, hyperedge_index = edge_index, hyperedge_attr = edge_features) # SimpleHyperGCN
 
-    hg = dhg.Hypergraph(x.shape[0], edge_index) # Build DHG hypergraph
-    x, edge_features = self._hypergraph_processor(x, edge_features, hg) # DHG hypergraph message passing
+    # hg = dhg.Hypergraph(x.shape[0], edge_index) # Build DHG hypergraph
+    # x, edge_features = self._hypergraph_processor(x, edge_features, hg) # DHG hypergraph message passing
+
+    vertices, hyperedges = edge_index[0], edge_index[1]
+    x, edge_features = self._unignn_processor(x, vertices, hyperedges, edge_features)
     
     x = self._decoder(x)
     return x
@@ -588,11 +591,12 @@ class UniGNNProcessor(nn.Module):
 
   def forward(self,
               x: torch.tensor,
-              edge_features: torch.tensor,
-              hg: dhg.Hypergraph):
+              vertices: torch.tensor,
+              hyperedges: torch.tensor,
+              edge_features: torch.tensor):
     
     for hnn in self.hnn_stacks:
-      x, edge_features = hnn(x, edge_features, hg)
+      x, edge_features = hnn(x, vertices, hyperedges, edge_features)
     return x, edge_features
 
     

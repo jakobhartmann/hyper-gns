@@ -330,7 +330,7 @@ class LearnedSimulator(nn.Module):
       # indices_list=[]
       # for idx in range(nr_edges):
       #    indices_list.append( hyper_edge_set[0,hyper_edge_set[1,:]==idx] ) # (hyper_edge_set[0,:]==idx).nonzero()#indices_list = [torch.ones((6)).to(torch.int32)*max(i-12,0) for i in range(n_total_points+6)]
-      return torch.cat(node_features, dim=-1), indices_list, edge_features#hyper_edge_set
+      return torch.cat(node_features, dim=-1), hyper_edge_set.to(self._device), edge_features#hyper_edge_set
 
 
 
