@@ -50,9 +50,11 @@ flags.DEFINE_integer("cuda_device_number", None, help="CUDA device (zero indexed
 flags.DEFINE_boolean('use_wandb', default = True, help = 'Whether or not to use Weights & Biases for experiment tracking.')
 flags.DEFINE_string('wandb_project', default = 'hypergraph-physics', help = 'Weights & Biases project name.')
 flags.DEFINE_string('wandb_entity', default = 'camb-mphil', help = 'Weights & Biases entity.')
+flags.DEFINE_string('wandb_resume', default = None, help = 'Whether or not to resume a Weights & Biases run.')
+flags.DEFINE_string('wandb_run_id', default = None, help = 'Weights & Biases run id to resume a run.')
 
 # Rollout
-flags.DEFINE_multi_integer('model_step_list', default = [0, 25000, 50000, 75000, 100000], help = 'List of steps corresponding to model checkpoints used to perform rollout prediction.')
+flags.DEFINE_multi_integer('model_step_list', default = [250000, 300000, 350000, 400000, 450000, 500000], help = 'List of steps corresponding to model checkpoints used to perform rollout prediction.')
 
 
 Stats = collections.namedtuple('Stats', ['mean', 'std'])
@@ -184,7 +186,7 @@ def predict_multiple(device: str, FLAGS):
   metadata = reading_utils.read_metadata(FLAGS.data_path)
   simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device)
 
-  logger = logging.Logger(use_wandb = FLAGS.use_wandb, wandb_project = FLAGS.wandb_project, wandb_entity = FLAGS.wandb_entity, config = FLAGS)
+  logger = logging.Logger(use_wandb = FLAGS.use_wandb, wandb_project = FLAGS.wandb_project, wandb_entity = FLAGS.wandb_entity, wandb_resume = FLAGS.wandb_resume, wandb_run_id = FLAGS.wandb_run_id, config = FLAGS)
 
   for step in FLAGS.model_step_list:
     model_file = os.path.join(FLAGS.model_path, 'model-' + str(step) + '.pt')
@@ -269,7 +271,7 @@ def train(rank, flags, world_size):
 
   if rank == 0:
     # Initialize logger
-    logger = logging.Logger(use_wandb = flags['use_wandb'], wandb_project = flags['wandb_project'], wandb_entity = flags['wandb_entity'], config = flags)
+    logger = logging.Logger(use_wandb = flags['use_wandb'], wandb_project = flags['wandb_project'], wandb_entity = flags['wandb_entity'], wandb_resume = flags['wandb_resume'], wandb_run_id = flags['wandb_run_id'], config = flags)
     train_loss = torch.tensor([]).to(rank)
 
   # If model_path does exist and model_file and train_state_file exist continue training.
@@ -475,6 +477,8 @@ def main(_):
   myflags["use_wandb"] = FLAGS.use_wandb
   myflags["wandb_project"] = FLAGS.wandb_project
   myflags["wandb_entity"] = FLAGS.wandb_entity
+  myflags["wandb_resume"] = FLAGS.wandb_resume
+  myflags["wandb_run_id"] = FLAGS.wandb_run_id
   myflags["model_step_list"] = FLAGS.model_step_list
 
   # Read metadata
