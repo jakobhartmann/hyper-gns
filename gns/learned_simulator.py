@@ -9,7 +9,7 @@ from typing import Dict
 import settings
 import itertools
 
-hyper_edge_set = True
+hyper_edge_set = False
 class LearnedSimulator(nn.Module):
   """Learned simulator from https://arxiv.org/pdf/2002.09405.pdf."""
 
@@ -234,10 +234,10 @@ class LearnedSimulator(nn.Module):
     if hyper_edge_set:
       #loopless implementation of returning hyperedge set
       nr_edges = senders.shape[0]
-      top = torch.zeros((nr_edges*2)).to(torch.int64).to(self._device)                              #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
+      top = torch.zeros((nr_edges*2),dtype=torch.int64,device=self._device)#.to(torch.int64).to(self._device)                              #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
       bot = torch.tensor(np.floor(np.arange(0, nr_edges, 0.5))).to(torch.int64).to(self._device)    #(0,0,1,1,2,2,...)     - hyper-edge indexes.
-      idx_send = list(range(0,2*nr_edges,2))
-      idx_rec  = list(range(1,2*nr_edges,2))
+      idx_send = np.arange(0,2*nr_edges,2)
+      idx_rec  = np.arange(1,2*nr_edges,2)
       top[idx_send]=senders
       top[idx_rec]=receivers
       top = top.reshape(-1,1)

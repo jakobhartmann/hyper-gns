@@ -350,6 +350,7 @@ def train(rank, flags, world_size):
                          loss, torch.zeros_like(loss))
         loss = loss.sum() / num_non_kinematic
 
+        
         # Computes the gradient of loss
         optimizer.zero_grad()
         loss.backward()
@@ -441,7 +442,7 @@ def _get_simulator(
         nnode_in=37 if metadata['dim'] == 3 else 30,
         nedge_in=metadata['dim'] + 1,
         latent_dim=128,
-        nmessage_passing_steps=1,#10
+        nmessage_passing_steps=10,#10
         nmlp_layers=2,
         mlp_hidden_dim=128,
         connectivity_radius=metadata['default_connectivity_radius'],
