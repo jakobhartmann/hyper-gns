@@ -9,7 +9,7 @@ from typing import Dict
 import settings
 import itertools
 
-hyper_edge_set = False
+hyper_edge_set = True
 class LearnedSimulator(nn.Module):
   """Learned simulator from https://arxiv.org/pdf/2002.09405.pdf."""
 
@@ -261,9 +261,9 @@ class LearnedSimulator(nn.Module):
       hyper_edge_list.append(new_hyperedge)'''
       
       # Calculate hyperedge list for 2-uniform hyperedges
-      hyper_edge_list = np.split(hyper_edge_indices[0], nr_edges)
+      #hyper_edge_list = np.split(hyper_edge_indices[0], nr_edges)
       return (torch.cat(node_features, dim=-1),
-              hyper_edge_list,
+              hyper_edge_indices,
               torch.cat(edge_features, dim=-1))
 
     return (torch.cat(node_features, dim=-1),

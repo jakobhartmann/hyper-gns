@@ -436,15 +436,15 @@ class EncodeProcessDecode(nn.Module):
     """
     x, edge_features = self._encoder(x, edge_features)
 
-    x, edge_features = self._processor(x, edge_index, edge_features) # original implementation
+    # x, edge_features = self._processor(x, edge_index, edge_features) # original implementation
 
     # x, edge_features = self._simple_hypergcn(x = x, hyperedge_index = edge_index, hyperedge_attr = edge_features) # SimpleHyperGCN
 
-    # hg = dhg.Hypergraph(x.shape[0], edge_index) # Build DHG hypergraph
-    # x, edge_features = self._hypergraph_processor(x, edge_features, hg) # DHG hypergraph message passing
+    #hg = dhg.Hypergraph(x.shape[0], edge_index) # Build DHG hypergraph
+    #x, edge_features = self._hypergraph_processor(x, edge_features, hg) # DHG hypergraph message passing
 
-    #vertices, hyperedges = edge_index[0], edge_index[1]
-    #x, edge_features = self._unignn_processor(x, vertices, hyperedges, edge_features)
+    vertices, hyperedges = edge_index[0], edge_index[1]
+    x, edge_features = self._unignn_processor(x, vertices, hyperedges, edge_features)
     
     x = self._decoder(x)
     return x
