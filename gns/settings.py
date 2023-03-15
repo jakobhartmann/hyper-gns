@@ -1,6 +1,8 @@
 ### Edge and Hyper-edge calculation ###
 # Connectivity radius is specified in data/metadat.json!
 # construct initial hypergraph using: "Dynamic Hypergraph Neural Networks" https://www.ijcai.org/proceedings/2019/0366.pdf #Algo 1 + smol extension.
+
+hyper_edge_set              = True  # if return_hyperedges false, and hyper_edge_set true uses 2 uniform hyperedges.
 return_hyperedges           = False # if true, returns hyper-edges as opposed to normal edges.
 # Settings for Normal Edges:
 settings_radius_clustering  = False # Radius

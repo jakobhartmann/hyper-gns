@@ -9,7 +9,7 @@ from typing import Dict
 import settings
 import itertools
 
-hyper_edge_set = True
+
 class LearnedSimulator(nn.Module):
   """Learned simulator from https://arxiv.org/pdf/2002.09405.pdf."""
 
@@ -231,7 +231,7 @@ class LearnedSimulator(nn.Module):
         normalized_relative_displacements, dim=-1, keepdim=True)
     edge_features.append(normalized_relative_distances)
  
-    if hyper_edge_set:
+    if settings.hyper_edge_set:
       #loopless implementation of returning hyperedge set
       nr_edges = senders.shape[0]
       top = torch.zeros((nr_edges*2),dtype=torch.int64,device=self._device)#.to(torch.int64).to(self._device)                              #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
@@ -243,7 +243,17 @@ class LearnedSimulator(nn.Module):
       top = top.reshape(-1,1)
       bot = bot.reshape(-1,1)
       hyper_edge_indices = torch.transpose(torch.cat((top, bot), dim=-1), 0, 1)
+      
+      # NEW For every hyperedge, add the node features. This way, we can tell apart edges.
+      edge_features = torch.cat(edge_features, dim=-1)
+      node_features = torch.cat(node_features, dim=-1)
 
+      
+      if True:
+        all_edge_ftrs_send = node_features[senders].squeeze()
+        all_edge_ftrs_rec = node_features[receivers].squeeze()
+        buffa = torch.cat((all_edge_ftrs_send, all_edge_ftrs_rec), dim=1) # edges x 60
+        edge_features = torch.cat((buffa,edge_features), dim=1)
       # Calculate hyperedge list for arbitrary hyperedge size
       '''hyper_edge_list, new_hyperedge = [], []
       max_idx = 0
@@ -262,9 +272,9 @@ class LearnedSimulator(nn.Module):
       
       # Calculate hyperedge list for 2-uniform hyperedges
       #hyper_edge_list = np.split(hyper_edge_indices[0], nr_edges)
-      return (torch.cat(node_features, dim=-1),
+      return (node_features,
               hyper_edge_indices,
-              torch.cat(edge_features, dim=-1))
+              edge_features)
 
     return (torch.cat(node_features, dim=-1),
             torch.stack([senders, receivers]),
