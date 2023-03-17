@@ -234,8 +234,8 @@ class LearnedSimulator(nn.Module):
     if settings.hyper_edge_set:
       #loopless implementation of returning hyperedge set
       nr_edges = senders.shape[0]
-      top = torch.zeros((nr_edges*2),dtype=torch.int64,device=self._device)#.to(torch.int64).to(self._device)                              #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
-      bot = torch.tensor(np.floor(np.arange(0, nr_edges, 0.5))).to(torch.int64).to(self._device)    #(0,0,1,1,2,2,...)     - hyper-edge indexes.
+      top = torch.zeros((nr_edges*2),dtype=torch.int64,device=self._device)#.to(torch.int64).to(self._device)  #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
+      bot = torch.tensor(np.floor(np.arange(0, nr_edges, 0.5))).to(torch.int64).to(self._device)               #(0,0,1,1,2,2,...)     - hyper-edge indexes.
       idx_send = np.arange(0,2*nr_edges,2)
       idx_rec  = np.arange(1,2*nr_edges,2)
       top[idx_send]=senders
@@ -249,7 +249,7 @@ class LearnedSimulator(nn.Module):
       node_features = torch.cat(node_features, dim=-1)
 
       
-      if True:
+      if False:
         all_edge_ftrs_send = node_features[senders].squeeze()
         all_edge_ftrs_rec = node_features[receivers].squeeze()
         buffa = torch.cat((all_edge_ftrs_send, all_edge_ftrs_rec), dim=1) # edges x 60

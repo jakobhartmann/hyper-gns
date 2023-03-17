@@ -440,7 +440,7 @@ def _get_simulator(
       simulator = learned_simulator.LearnedSimulator(
       particle_dimensions=metadata['dim'],
       nnode_in=37 if metadata['dim'] == 3 else 30, 
-      nedge_in=3 + 2*30,#3 edge ftrs + 2*30 node features.#+2*30
+      nedge_in=3,#3 edge ftrs + 2*30 node features.#+2*30
       latent_dim=128,
       nmessage_passing_steps=10,
       nmlp_layers=2,

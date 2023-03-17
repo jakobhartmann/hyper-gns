@@ -1,5 +1,5 @@
 from typing import List
-
+import numpy as np
 import dhg
 import torch
 import torch.nn as nn
@@ -7,7 +7,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn.conv import HypergraphConv
 import settings
-from torch_scatter import scatter
+from torch_scatter import scatter, scatter_max
 
 
 def build_mlp(
@@ -176,7 +176,7 @@ class InteractionNetwork(MessagePassing):
     # Start propagating messages.
     # Takes in the edge indices and all additional data which is needed to
     # construct messages and to update node embeddings.
-    x, edge_features = self.propagate(
+    x, edge_features = self.propagate( #propagate calls -> 
         edge_index=edge_index, x=x, edge_features=edge_features)
 
     return x + x_residual, edge_features + edge_features_residual
@@ -223,8 +223,11 @@ class InteractionNetwork(MessagePassing):
     """
     # Concat node features with a final shape of
     # [nparticles, latent_dim (or nnode_in) *2]
-    x_updated = torch.cat([x_updated, x], dim=-1)
+    x_updated = torch.cat([x_updated, x], dim=-1)#x_updated comes from summing over edges. 
     x_updated = self.node_fn(x_updated)
+    print("x shape: ", x[0,:10])
+    print("x updated shape: ", x_updated[0,:10])
+    print("edge features shape", edge_features.shape)
     return x_updated, edge_features
 
 
@@ -434,14 +437,17 @@ class EncodeProcessDecode(nn.Module):
           (nedges, nedge_in_features)
 
     """
+
+
     x, edge_features = self._encoder(x, edge_features)
 
-    # x, edge_features = self._processor(x, edge_index, edge_features) # original implementation
+    #x, edge_features = self._processor(x, edge_index, edge_features) # original implementation
 
     # x, edge_features = self._simple_hypergcn(x = x, hyperedge_index = edge_index, hyperedge_attr = edge_features) # SimpleHyperGCN
 
     #hg = dhg.Hypergraph(x.shape[0], edge_index) # Build DHG hypergraph
     #x, edge_features = self._hypergraph_processor(x, edge_features, hg) # DHG hypergraph message passing
+
 
     vertices, hyperedges = edge_index[0], edge_index[1]
     x, edge_features = self._unignn_processor(x, vertices, hyperedges, edge_features)
@@ -620,7 +626,7 @@ class UniGNNInteractionNetwork(nn.Module):
                                              nnode_out),
                                    nn.LayerNorm(nnode_out)])
     # Edge MLP
-    self.edge_fn = nn.Sequential(*[build_mlp(nnode_in + nedge_in,
+    self.edge_fn = nn.Sequential(*[build_mlp(nnode_in*2 + nedge_in,#nnode_in*2
                                              [mlp_hidden_dim
                                               for _ in range(nmlp_layers)],
                                              nedge_out),
@@ -642,10 +648,21 @@ class UniGNNInteractionNetwork(nn.Module):
 
     # Message / Send
     Xve = X[vertices]
-    Xe = scatter(Xve, hyperedges, dim = 0, reduce = 'add')
+    #every other index 
+    idx_send = torch.arange(0,2*hyperedges[-1]+1,2)
+    idx_rec = torch.arange(1,2*hyperedges[-1]+1+1,2)
+    #print(len(idx_send))
+    #print(len(idx_rec))
+    #print("last elem rec: ", idx_rec[-1])
+    #print("last elem send: ", idx_send[-1])
+    #print("XVe.shape", Xve.shape)
+    Xve_send = Xve[idx_send]
+    Xve_rec = Xve[idx_rec]
+    Xe = torch.cat((Xve_send, Xve_rec), dim=-1)
 
     stacked_hyperedge_features = torch.cat([Xe, hyperedge_features], dim = -1)
     updated_hyperedge_features = self.edge_fn(stacked_hyperedge_features)
+
 
     # Aggregate
     Xev = updated_hyperedge_features[hyperedges]
