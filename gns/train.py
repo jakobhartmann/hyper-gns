@@ -421,7 +421,23 @@ def _get_simulator(
       },
   }
 
-  if settings.return_hyperedges:#if we are using hyperedge, we have 29 edge features. 
+  if settings.USE_BOTH:
+    simulator = learned_simulator.LearnedSimulator(
+      particle_dimensions=metadata['dim'],
+      nnode_in=37 if metadata['dim'] == 3 else 30,
+      nedge_in=3,#3 features for regular graph
+      nedge_in_h=29,#29 features for hypergraph
+      latent_dim=128,
+      nmessage_passing_steps=10,
+      nmlp_layers=2,
+      mlp_hidden_dim=128,
+      connectivity_radius=metadata['default_connectivity_radius'],
+      boundaries=np.array(metadata['bounds']),
+      normalization_stats=normalization_stats,
+      nparticle_types=NUM_PARTICLE_TYPES,
+      particle_type_embedding_size=16,
+      device=device)
+  elif settings.return_hyperedges:#if we are using hyperedge, we have 29 edge features. 
     simulator = learned_simulator.LearnedSimulator(
       particle_dimensions=metadata['dim'],
       nnode_in=37 if metadata['dim'] == 3 else 30,

@@ -17,7 +17,7 @@ class LearnedSimulator(nn.Module):
           self,
           particle_dimensions: int,
           nnode_in: int,
-          nedge_in: int,
+          nedge_in: int,#if Both graph and hypergraph then nedge_in is graph features
           latent_dim: int,
           nmessage_passing_steps: int,
           nmlp_layers: int,
@@ -27,7 +27,9 @@ class LearnedSimulator(nn.Module):
           normalization_stats: Dict,
           nparticle_types: int,
           particle_type_embedding_size,
-          device="cpu"):
+          device="cpu",
+          nedge_in_h = None,#Only used if both = True. Otherwise features stored in nedge_in.
+          ):
     """Initializes the model.
 
     Args:
@@ -68,6 +70,16 @@ class LearnedSimulator(nn.Module):
         nmessage_passing_steps=nmessage_passing_steps,
         nmlp_layers=nmlp_layers,
         mlp_hidden_dim=mlp_hidden_dim)
+    if settings.USE_BOTH:
+      self._encode_process_decode_both = graph_network.EncodeProcessDecodeBoth(
+          nnode_in_features=nnode_in,
+          nnode_out_features=particle_dimensions,
+          nedge_in_features_g=nedge_in,#edge in features for graph
+          nedge_in_features_h=nedge_in_h,#edge in features for hypergraph
+          latent_dim=latent_dim,
+          nmessage_passing_steps=nmessage_passing_steps,
+          nmlp_layers=nmlp_layers,
+          mlp_hidden_dim=mlp_hidden_dim)
 
     self._device = device
 
@@ -121,7 +133,7 @@ class LearnedSimulator(nn.Module):
         nr_hyperedges = node_features.shape[0] + nr_cl #nr_nodes + nr_clusters
         hyperedge_dim = node_features.shape[0] * knn + nr_cl * top_s #each node has knn neighbours + each cluster has top S closest nodes. 
         hyperedge_matrix = torch.zeros((2,hyperedge_dim)).to(torch.int64)
-        clustering = KMeans(n_clusters=nr_cl).fit(node_features.cpu()) # init with k_m_cl cluster. Node features = nr_nodes, 2
+        clustering = KMeans(n_clusters=nr_cl,n_init=10).fit(node_features.cpu()) # init with k_m_cl cluster. Node features = nr_nodes, 2
         #get KNN nodes to each centre
         for i in range(nr_cl):
             centre = torch.tensor(clustering.cluster_centers_[i]).to(self._device)
@@ -231,7 +243,7 @@ class LearnedSimulator(nn.Module):
         normalized_relative_displacements, dim=-1, keepdim=True)
     edge_features.append(normalized_relative_distances)
  
-    if settings.hyper_edge_set:
+    if settings.hyper_edge_set or settings.USE_BOTH:
       #loopless implementation of returning hyperedge set
       nr_edges = senders.shape[0]
       top = torch.zeros((nr_edges*2),dtype=torch.int64,device=self._device)#.to(torch.int64).to(self._device)  #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
@@ -393,14 +405,28 @@ class LearnedSimulator(nn.Module):
       next_positions (torch.tensor): Next position of particles.
     """
     
-    if settings.return_hyperedges:
+
+    if settings.USE_BOTH:
+      #node features are the same, edge_indexes and edge features will differ.
+      node_features, edge_index_h, edge_features_h = self._encoder_preprocessor_hypergraph(
+        noisy_position_sequence, nparticles_per_example, particle_types)
+      node_features, edge_index_g, edge_features_g = self._encoder_preprocessor(
+        noisy_position_sequence, nparticles_per_example, particle_types)
+      
+    elif settings.return_hyperedges:
       node_features, edge_index, edge_features = self._encoder_preprocessor_hypergraph(
         current_positions, nparticles_per_example, particle_types)
     else:
       node_features, edge_index, edge_features = self._encoder_preprocessor(
         current_positions, nparticles_per_example, particle_types)
-    predicted_normalized_acceleration = self._encode_process_decode(
-      node_features, edge_index, edge_features)
+    
+    if settings.USE_BOTH:
+      predicted_normalized_acceleration = self._encode_process_decode_both(
+        node_features, edge_index_g, edge_features_g, edge_index_h, edge_features_h)
+    else:
+      predicted_normalized_acceleration = self._encode_process_decode(
+        node_features, edge_index, edge_features)
+    
     next_positions = self._decoder_postprocessor(
         predicted_normalized_acceleration, current_positions)
     return next_positions
@@ -435,13 +461,26 @@ class LearnedSimulator(nn.Module):
     noisy_position_sequence = position_sequence + position_sequence_noise
 
     # Perform the forward pass with the noisy position sequence.
-    if settings.return_hyperedges:
+    if settings.USE_BOTH:
+      #node features are the same, edge_indexes and edge features will differ.
+      node_features, edge_index_h, edge_features_h = self._encoder_preprocessor_hypergraph(
+        noisy_position_sequence, nparticles_per_example, particle_types)
+      node_features, edge_index_g, edge_features_g = self._encoder_preprocessor(
+        noisy_position_sequence, nparticles_per_example, particle_types)
+      
+
+    elif settings.return_hyperedges:
       node_features, edge_index, edge_features = self._encoder_preprocessor_hypergraph(
         noisy_position_sequence, nparticles_per_example, particle_types)
     else:
       node_features, edge_index, edge_features = self._encoder_preprocessor(
         noisy_position_sequence, nparticles_per_example, particle_types)
-    predicted_normalized_acceleration = self._encode_process_decode(
+    
+    if settings.USE_BOTH:
+      predicted_normalized_acceleration = self._encode_process_decode_both(
+        node_features, edge_index_g, edge_features_g, edge_index_h, edge_features_h)
+    else:
+      predicted_normalized_acceleration = self._encode_process_decode(
         node_features, edge_index, edge_features)
 
     # Calculate the target acceleration, using an `adjusted_next_position `that

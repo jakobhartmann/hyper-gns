@@ -447,10 +447,143 @@ class EncodeProcessDecode(nn.Module):
 
     #hg = dhg.Hypergraph(x.shape[0], edge_index) # Build DHG hypergraph
     #x, edge_features = self._hypergraph_processor(x, edge_features, hg) # DHG hypergraph message passing
-
-
     vertices, hyperedges = edge_index[0], edge_index[1]
     x, edge_features = self._unignn_processor(x, vertices, hyperedges, edge_features)
+    
+    x = self._decoder(x)
+    return x
+
+
+class EncodeProcessDecodeBoth(nn.Module):
+  #takes in both edges and hyperedges.
+  #uses unignn to process hyperedges.
+
+  def __init__(
+      self,
+      nnode_in_features: int,
+      nnode_out_features: int,
+      nedge_in_features_g: int,
+      nedge_in_features_h: int,
+      latent_dim: int,
+      nmessage_passing_steps: int,
+      nmlp_layers: int,
+      mlp_hidden_dim: int,
+  ):
+    """Encode-Process-Decode function approximator for learnable simulator.
+
+    Args:
+      nnode_in_features: Number of node input features (for 2D = 30, 
+        calculated as [10 = 5 times steps * 2 positions (x, y) + 
+        4 distances to boundaries (top/bottom/left/right) + 
+        16 particle type embeddings]).
+      nnode_out_features:  Number of node outputs (particle dimension).
+      nedge_in_features: Number of edge input features (for 2D = 3, 
+        calculated as [2 (x, y) relative displacements between 2 particles + 
+        distance between 2 particles]).
+      latent_dim: Size of latent dimension (128)
+      nmlp_layer: Number of hidden layers in the MLP (typically of size 2).
+      mlp_hidden_dim: Size of the hidden layer (latent dimension of size 128).
+
+    """
+    super(EncodeProcessDecodeBoth, self).__init__()
+    self._encoder_g = Encoder(
+        nnode_in_features=nnode_in_features,
+        nnode_out_features=latent_dim,
+        nedge_in_features=nedge_in_features_g,
+        nedge_out_features=latent_dim,
+        nmlp_layers=nmlp_layers,
+        mlp_hidden_dim=mlp_hidden_dim,
+    )
+    self._encoder_h = Encoder(
+        nnode_in_features=nnode_in_features,
+        nnode_out_features=latent_dim,
+        nedge_in_features=nedge_in_features_h,
+        nedge_out_features=latent_dim,
+        nmlp_layers=nmlp_layers,
+        mlp_hidden_dim=mlp_hidden_dim,
+    )
+
+
+    self._processor = Processor(
+        nnode_in=latent_dim,
+        nnode_out=latent_dim,
+        nedge_in=latent_dim,
+        nedge_out=latent_dim,
+        nmessage_passing_steps=nmessage_passing_steps,
+        nmlp_layers=nmlp_layers,
+        mlp_hidden_dim=mlp_hidden_dim,
+    )
+    self._simple_hypergcn = SimpleHyperGCN(
+        nnode_in = latent_dim,
+        nnode_out = latent_dim,
+        nedge_in = latent_dim,
+        nedge_out = latent_dim,
+        nmessage_passing_steps = nmessage_passing_steps,
+        hyperconv_hidden_dim = mlp_hidden_dim,
+        use_attention = False,
+        negative_slope = 0.2
+    )
+    self._hypergraph_processor = HyperGraphProcessor(
+        nnode_in=latent_dim,
+        nnode_out=latent_dim,
+        nedge_in=latent_dim,
+        nedge_out=latent_dim,
+        nmessage_passing_steps=nmessage_passing_steps,
+        nmlp_layers=nmlp_layers,
+        mlp_hidden_dim=mlp_hidden_dim,
+    )
+    self._unignn_processor = UniGNNProcessor(
+        nnode_in=latent_dim,
+        nnode_out=latent_dim,
+        nedge_in=latent_dim,
+        nedge_out=latent_dim,
+        nmessage_passing_steps=nmessage_passing_steps,
+        nmlp_layers=nmlp_layers,
+        mlp_hidden_dim=mlp_hidden_dim,
+    )
+    self._unignn_processor_both = UniGNNProcessorBoth(
+        nnode_in=latent_dim,
+        nnode_out=latent_dim,
+        nedge_in=latent_dim,
+        nedge_out=latent_dim,
+        nmessage_passing_steps=nmessage_passing_steps,
+        nmlp_layers=nmlp_layers,
+        mlp_hidden_dim=mlp_hidden_dim,
+    )
+
+    self._decoder = Decoder(
+        nnode_in=latent_dim,
+        nnode_out=nnode_out_features,
+        nmlp_layers=nmlp_layers,
+        mlp_hidden_dim=mlp_hidden_dim,
+    )
+
+  def forward(self,
+              x: torch.tensor,
+              edge_index_g: torch.tensor,
+              edge_features_g: torch.tensor,
+              edge_index_h: torch.tensor,
+              edge_features_h: torch.tensor):
+    """The forward hook runs at instatiation of EncodeProcessorDecode class.
+
+      Args:
+        x: Particle state representation as a torch tensor with shape 
+          (nparticles, nnode_in_features)
+        edge_index: A torch tensor list of source and target nodes with shape 
+          (2, nedges)
+        edge_features: Edge features as a torch tensor with shape 
+          (nedges, nedge_in_features)
+
+    """
+
+
+    x_g, edge_features_g = self._encoder_g(x, edge_features_g)
+    x_h, edge_features_h = self._encoder_h(x, edge_features_h)
+
+    vertices_g, hyperedges_g = edge_index_g[0], edge_index_g[1]
+    vertices_h, hyperedges_h = edge_index_h[0], edge_index_h[1]
+
+    x, edge_features_g = self._unignn_processor_both(x_g, vertices_g, hyperedges_g, edge_features_g, x_h, vertices_h, hyperedges_h, edge_features_h)
     
     x = self._decoder(x)
     return x
@@ -605,9 +738,72 @@ class UniGNNProcessor(nn.Module):
       x, edge_features = hnn(x, vertices, hyperedges, edge_features)
     return x, edge_features
 
+
+class UniGNNProcessorBoth(nn.Module):
+  def __init__(
+      self,
+      nnode_in: int,
+      nnode_out: int,
+      nedge_in: int,
+      nedge_out: int,
+      nmessage_passing_steps: int,
+      nmlp_layers: int,
+      mlp_hidden_dim: int,
+  ):
+
+    super(UniGNNProcessorBoth, self).__init__()
+
+    self.gnn_stacks = nn.ModuleList([
+        UniGNNInteractionNetwork(
+            nnode_in=nnode_in,
+            nnode_out=nnode_out,
+            nedge_in=nedge_in,
+            nedge_out=nedge_out,
+            nmlp_layers=nmlp_layers,
+            mlp_hidden_dim=mlp_hidden_dim,
+            concatenate=True
+        ) for _ in range(nmessage_passing_steps)])
+    self.hnn_stacks = nn.ModuleList([
+        UniGNNInteractionNetwork(
+            nnode_in=nnode_in,
+            nnode_out=nnode_out,
+            nedge_in=nedge_in,
+            nedge_out=nedge_out,
+            nmlp_layers=nmlp_layers,
+            mlp_hidden_dim=mlp_hidden_dim,
+            concatenate=False
+        ) for _ in range(nmessage_passing_steps)])
+
+
+  def forward(self,
+              x_g: torch.tensor,
+              vertices_g: torch.tensor,
+              hyperedges_g: torch.tensor,
+              edge_features_g: torch.tensor,
+              x_h: torch.tensor,
+              vertices_h: torch.tensor,
+              hyperedges_h: torch.tensor,
+              edge_features_h: torch.tensor):
+    #Two ways of doing this. either sum in each layer. Or do them seperately and then sum in the end.
+    #I go for the latter approach. Getting the right dimensionality is a nightmare otherwise. feel free to change :)
+
+    #Regular Message passing
+    for gnn in self.gnn_stacks:
+      x_g, edge_features_g = gnn(x_g, vertices_g, hyperedges_g, edge_features_g)
+
+    #Hypergraph message passing
+    for hnn in self.hnn_stacks:
+      x_h, edge_features_h = hnn(x_h, vertices_h, hyperedges_h, edge_features_h)
+
+    #unfortunately we cannot add the edges. They will have different nr of dimensions
+    return x_h+x_g, edge_features_g
+
+
+
     
 # source: https://github.com/jianhao2016/AllSet/blob/main/src/models.py
 class UniGNNInteractionNetwork(nn.Module):
+  # if concatenate = true, then we are in the 2 uniform setting. We concatenate n1 and n2 information instead of summing.
   def __init__(
       self,
       nnode_in: int,
@@ -616,6 +812,7 @@ class UniGNNInteractionNetwork(nn.Module):
       nedge_out: int,
       nmlp_layers: int,
       mlp_hidden_dim: int,
+      concatenate = False
   ):
 
     super(UniGNNInteractionNetwork, self).__init__()
@@ -625,19 +822,29 @@ class UniGNNInteractionNetwork(nn.Module):
                                               for _ in range(nmlp_layers)],
                                              nnode_out),
                                    nn.LayerNorm(nnode_out)])
-    # Edge MLP
-    self.edge_fn = nn.Sequential(*[build_mlp(nnode_in*2 + nedge_in,#nnode_in*2
-                                             [mlp_hidden_dim
-                                              for _ in range(nmlp_layers)],
-                                             nedge_out),
-                                   nn.LayerNorm(nedge_out)])
+    # Edge MLP 
+    # if we concatenate then nnode_in*2, if we do not, then simply nnode_in
+    if concatenate:
+      self.edge_fn = nn.Sequential(*[build_mlp(nnode_in*2 + nedge_in,#nnode_in*2
+                                              [mlp_hidden_dim
+                                                for _ in range(nmlp_layers)],
+                                              nedge_out),
+                                    nn.LayerNorm(nedge_out)])
+    else:
+      self.edge_fn = nn.Sequential(*[build_mlp(nnode_in + nedge_in,#nnode_in*2
+                                        [mlp_hidden_dim
+                                          for _ in range(nmlp_layers)],
+                                        nedge_out),
+                              nn.LayerNorm(nedge_out)])
+  
+    self.concatenate = concatenate
 
   def forward(self,
               X: torch.tensor,
               vertices: torch.tensor,
               hyperedges: torch.tensor,
               hyperedge_features: torch.tensor):
-
+    
     # Save particle state and edge features
     X_residual = X
     hyperedge_features_residual = hyperedge_features
@@ -648,21 +855,18 @@ class UniGNNInteractionNetwork(nn.Module):
 
     # Message / Send
     Xve = X[vertices]
-    #every other index 
-    idx_send = torch.arange(0,2*hyperedges[-1]+1,2)
-    idx_rec = torch.arange(1,2*hyperedges[-1]+1+1,2)
-    #print(len(idx_send))
-    #print(len(idx_rec))
-    #print("last elem rec: ", idx_rec[-1])
-    #print("last elem send: ", idx_send[-1])
-    #print("XVe.shape", Xve.shape)
-    Xve_send = Xve[idx_send]
-    Xve_rec = Xve[idx_rec]
-    Xe = torch.cat((Xve_send, Xve_rec), dim=-1)
+    # every other index 
+    if self.concatenate:
+      idx_send = torch.arange(0,2*hyperedges[-1]+1,2)
+      idx_rec = torch.arange(1,2*hyperedges[-1]+1+1,2)
+      Xve_send = Xve[idx_send]
+      Xve_rec = Xve[idx_rec]
+      Xe = torch.cat((Xve_send, Xve_rec), dim=-1)
+    else:
+      Xe = scatter(Xve, hyperedges, dim = 0, reduce = 'add')
 
     stacked_hyperedge_features = torch.cat([Xe, hyperedge_features], dim = -1)
     updated_hyperedge_features = self.edge_fn(stacked_hyperedge_features)
-
 
     # Aggregate
     Xev = updated_hyperedge_features[hyperedges]
