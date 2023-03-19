@@ -126,24 +126,31 @@ class LearnedSimulator(nn.Module):
           radius: float,
           add_self_edges: bool = True):
         # returns 2xk hyperedge matrix, nr_edges. Does it based on KNN and KMeans clustering as described in the paper.
+
         batch_ids = torch.cat([torch.LongTensor([i for _ in range(n)]) for i, n in enumerate(nparticles_per_example)]).to(self._device)
         top_s = settings.top_s
         nr_cl = settings.k_m_cl  #nr clusters
         knn   = settings.k_nn_nr #nr k nearest neighbours
+        radius= settings.con_rad
+        if settings.knn_clustering:
+          edge_index = knn_graph(node_features, k=knn, batch=batch_ids, loop=add_self_edges) # get k nearest neighbours. what is batch
+        else:
+          edge_index = radius_graph(node_features, r=radius, batch=batch_ids, loop=add_self_edges)
+
         nr_hyperedges = node_features.shape[0] + nr_cl #nr_nodes + nr_clusters
-        hyperedge_dim = node_features.shape[0] * knn + nr_cl * top_s #each node has knn neighbours + each cluster has top S closest nodes. 
+        hyperedge_dim = edge_index.shape[1] + nr_cl * top_s #each node has knn neighbours + each cluster has top S closest nodes. 
         hyperedge_matrix = torch.zeros((2,hyperedge_dim)).to(torch.int64)
-        clustering = KMeans(n_clusters=nr_cl,n_init=10).fit(node_features.cpu()) # init with k_m_cl cluster. Node features = nr_nodes, 2
-        #get KNN nodes to each centre
-        for i in range(nr_cl):
-            centre = torch.tensor(clustering.cluster_centers_[i]).to(self._device)
-            dists = (node_features - centre)
-            dists = (dists*dists).sum(dim=1)           # squared dist is equally good as nonsquared dist
-            closest_nodes = torch.topk(dists, k=top_s) #top_nodes.indices
-            hyperedge_matrix[0,i*top_s:(i+1)*top_s] = closest_nodes.indices
-            hyperedge_matrix[1,i*top_s:(i+1)*top_s] = i
+        if settings.kmeans_clustering:
+          clustering = KMeans(n_clusters=nr_cl,n_init=10).fit(node_features.cpu()) # init with k_m_cl cluster. Node features = nr_nodes, 2
+          #get KNN nodes to each centre
+          for i in range(nr_cl):
+              centre = torch.tensor(clustering.cluster_centers_[i]).to(self._device)
+              dists = (node_features - centre)
+              dists = (dists*dists).sum(dim=1)           # squared dist is equally good as nonsquared dist
+              closest_nodes = torch.topk(dists, k=top_s) # top_nodes.indices
+              hyperedge_matrix[0,i*top_s:(i+1)*top_s] = closest_nodes.indices
+              hyperedge_matrix[1,i*top_s:(i+1)*top_s] = i
         end_pos = nr_cl*top_s
-        edge_index = knn_graph(node_features, k=knn, batch=batch_ids, loop=add_self_edges) # get k nearest neighbours. what is batch
         hyperedge_matrix[0,end_pos:] = edge_index[0,:]#nodes
         hyperedge_matrix[1,end_pos:] = edge_index[1,:]+nr_cl#edges
         return hyperedge_matrix.to(self._device), nr_hyperedges
