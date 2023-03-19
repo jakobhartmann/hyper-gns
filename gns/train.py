@@ -140,7 +140,7 @@ def rollout(
   return output_dict, loss
 
 
-def predict(device: str, FLAGS):
+def predict(device: str, FLAGS, myflags):
   """Predict rollouts.
 
   Args:
@@ -148,7 +148,7 @@ def predict(device: str, FLAGS):
 
   """
   metadata = reading_utils.read_metadata(FLAGS.data_path)
-  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device, FLAGS)
+  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device, myflags)
 
   # Load simulator
   if os.path.exists(FLAGS.model_path + FLAGS.model_file):
@@ -196,7 +196,7 @@ def predict(device: str, FLAGS):
       torch.mean(torch.cat(eval_loss))))
   
 
-def predict_multiple(device: str, FLAGS):
+def predict_multiple(device: str, FLAGS, myflags):
   """Predict rollouts for multiple models.
 
   Args:
@@ -204,7 +204,7 @@ def predict_multiple(device: str, FLAGS):
 
   """
   metadata = reading_utils.read_metadata(FLAGS.data_path)
-  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device, FLAGS)
+  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device, myflags)
 
   logger = logging.Logger(use_wandb = FLAGS.use_wandb, wandb_project = FLAGS.wandb_project, wandb_entity = FLAGS.wandb_entity, wandb_resume = FLAGS.wandb_resume, wandb_run_id = FLAGS.wandb_run_id, config = FLAGS)
 
@@ -570,14 +570,14 @@ def main(_):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if FLAGS.cuda_device_number is not None and torch.cuda.is_available():
       device = torch.device(f'cuda:{int(FLAGS.cuda_device_number)}')
-    predict(device, FLAGS)
+    predict(device, FLAGS, myflags)
   
   elif FLAGS.mode == 'rollout_multiple':
     # Set device
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if FLAGS.cuda_device_number is not None and torch.cuda.is_available():
       device = torch.device(f'cuda:{int(FLAGS.cuda_device_number)}')
-    predict_multiple(device, FLAGS)
+    predict_multiple(device, FLAGS, myflags)
 
 if __name__ == '__main__':
   app.run(main)
