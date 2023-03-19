@@ -21,7 +21,7 @@ from gns import noise_utils
 from gns import reading_utils
 from gns import data_loader
 from gns import distribute
-from gns import settings
+#from gns import settings
 from utils import logging
 
 flags.DEFINE_enum(
@@ -55,6 +55,26 @@ flags.DEFINE_string('wandb_run_id', default = None, help = 'Weights & Biases run
 
 # Rollout
 flags.DEFINE_multi_integer('model_step_list', default = [250000, 300000, 350000, 400000, 450000, 500000], help = 'List of steps corresponding to model checkpoints used to perform rollout prediction.')
+
+# Hyperedge type
+flags.DEFINE_boolean('USE_BOTH', default = True, help = 'Whether or not to use 2 uniform hyperedges (concat) + hyperedges (kmeans and knn).')
+flags.DEFINE_boolean('return_hyperedges', default = True, help = 'Whether to use hyperedges (knn/connectivity radus + kmeans)')
+flags.DEFINE_boolean('hyper_edge_set', default = True, help = 'Whether to use 2 uniform hyperedges (NO CONCAT)')
+
+# Which hyperedge features to use
+flags.DEFINE_boolean('knn_clustering', default = True, help = 'See settings.py for more info')
+flags.DEFINE_boolean('radius_clustering', default = True, help = 'See settings.py for more info')
+flags.DEFINE_boolean('kmeans_clustering', default = True, help = 'See settings.py for more info')
+
+
+# Hyperedge feature settings
+flags.DEFINE_integer('k_m_cl', 6, help='Nr clusters.')
+flags.DEFINE_integer('top_s', 10, help='Nr top s nodes to choose from each cluster.')
+flags.DEFINE_integer('k_nn_nr', 4, help='Nr k nearest neighbours.')
+flags.DEFINE_float('con_rad', 0.015, help='Connectivity radius.')
+
+
+
 
 
 Stats = collections.namedtuple('Stats', ['mean', 'std'])
@@ -128,7 +148,7 @@ def predict(device: str, FLAGS):
 
   """
   metadata = reading_utils.read_metadata(FLAGS.data_path)
-  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device)
+  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device, FLAGS)
 
   # Load simulator
   if os.path.exists(FLAGS.model_path + FLAGS.model_file):
@@ -184,7 +204,7 @@ def predict_multiple(device: str, FLAGS):
 
   """
   metadata = reading_utils.read_metadata(FLAGS.data_path)
-  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device)
+  simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device, FLAGS)
 
   logger = logging.Logger(use_wandb = FLAGS.use_wandb, wandb_project = FLAGS.wandb_project, wandb_entity = FLAGS.wandb_entity, wandb_resume = FLAGS.wandb_resume, wandb_run_id = FLAGS.wandb_run_id, config = FLAGS)
 
@@ -260,10 +280,11 @@ def train(rank, flags, world_size):
     rank: local rank
     world_size: total number of ranks
   """
+  #train(rank, myflags, world_size)
   distribute.setup(rank, world_size)
 
   metadata = reading_utils.read_metadata(flags["data_path"])
-  serial_simulator = _get_simulator(metadata, flags["noise_std"], flags["noise_std"], rank)
+  serial_simulator = _get_simulator(metadata, flags["noise_std"], flags["noise_std"], rank, flags)
 
   simulator = DDP(serial_simulator.to(rank), device_ids=[rank], output_device=rank)
   optimizer = torch.optim.Adam(simulator.parameters(), lr=flags["lr_init"]*world_size)
@@ -397,7 +418,9 @@ def _get_simulator(
         metadata: json,
         acc_noise_std: float,
         vel_noise_std: float,
-        device: str) -> learned_simulator.LearnedSimulator:
+        device: str,
+        myflags) -> learned_simulator.LearnedSimulator:
+  
   """Instantiates the simulator.
 
   Args:
@@ -421,7 +444,8 @@ def _get_simulator(
       },
   }
 
-  if settings.USE_BOTH:
+  print("MY_FLAGS", myflags)
+  if myflags["USE_BOTH"]:
     simulator = learned_simulator.LearnedSimulator(
       particle_dimensions=metadata['dim'],
       nnode_in=37 if metadata['dim'] == 3 else 30,
@@ -436,8 +460,9 @@ def _get_simulator(
       normalization_stats=normalization_stats,
       nparticle_types=NUM_PARTICLE_TYPES,
       particle_type_embedding_size=16,
-      device=device)
-  elif settings.return_hyperedges:#if we are using hyperedge, we have 29 edge features. 
+      device=device,
+      myflags = myflags)
+  elif myflags["return_hyperedges"]:#if we are using hyperedge, we have 29 edge features. 
     simulator = learned_simulator.LearnedSimulator(
       particle_dimensions=metadata['dim'],
       nnode_in=37 if metadata['dim'] == 3 else 30,
@@ -451,8 +476,9 @@ def _get_simulator(
       normalization_stats=normalization_stats,
       nparticle_types=NUM_PARTICLE_TYPES,
       particle_type_embedding_size=16,
-      device=device)
-  elif settings.hyper_edge_set:#if we are using 2-uniform hyperedges. Added edge
+      device=device,
+      myflags = myflags)
+  elif myflags["hyper_edge_set"]:#if we are using 2-uniform hyperedges. Added edge
       simulator = learned_simulator.LearnedSimulator(
       particle_dimensions=metadata['dim'],
       nnode_in=37 if metadata['dim'] == 3 else 30, 
@@ -466,7 +492,8 @@ def _get_simulator(
       normalization_stats=normalization_stats,
       nparticle_types=NUM_PARTICLE_TYPES,
       particle_type_embedding_size=16,
-      device=device)
+      device=device,
+      myflags=myflags)
   else:
     simulator = learned_simulator.LearnedSimulator(
         particle_dimensions=metadata['dim'],
@@ -481,7 +508,8 @@ def _get_simulator(
         normalization_stats=normalization_stats,
         nparticle_types=NUM_PARTICLE_TYPES,
         particle_type_embedding_size=16,
-        device=device)
+        device=device,
+        myflags=myflags)
 
   return simulator
 
@@ -490,6 +518,8 @@ def main(_):
   """Train or evaluates the model.
 
   """
+  
+  
   os.environ["MASTER_ADDR"] = "localhost"
   os.environ["MASTER_PORT"] = "29500"
   FLAGS = flags.FLAGS
@@ -512,7 +542,19 @@ def main(_):
   myflags["wandb_resume"] = FLAGS.wandb_resume
   myflags["wandb_run_id"] = FLAGS.wandb_run_id
   myflags["model_step_list"] = FLAGS.model_step_list
-
+  #hypergns
+  myflags["USE_BOTH"] = FLAGS.USE_BOTH
+  myflags["return_hyperedges"] = FLAGS.return_hyperedges
+  myflags["hyper_edge_set"] = FLAGS.hyper_edge_set
+  myflags["knn_clustering"] = FLAGS.knn_clustering
+  myflags["radius_clustering"] = FLAGS.radius_clustering
+  myflags["kmeans_clustering"] = FLAGS.kmeans_clustering
+  myflags["k_m_cl"] = FLAGS.k_m_cl
+  myflags["top_s"] = FLAGS.top_s
+  myflags["k_nn_nr"] = FLAGS.k_nn_nr
+  myflags["con_rad"] = FLAGS.con_rad
+  
+  
   # Read metadata
   if FLAGS.mode == 'train':
     # If model_path does not exist create new directory.

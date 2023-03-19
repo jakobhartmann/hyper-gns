@@ -6,7 +6,6 @@ from torch_geometric.nn import MessagePassing, radius_graph, knn_graph
 from sklearn.cluster import KMeans
 from torch_scatter import scatter_mean, scatter_std, scatter_max, scatter_min
 from typing import Dict
-import settings
 import itertools
 
 
@@ -28,7 +27,8 @@ class LearnedSimulator(nn.Module):
           nparticle_types: int,
           particle_type_embedding_size,
           device="cpu",
-          nedge_in_h = None,#Only used if both = True. Otherwise features stored in nedge_in.
+          nedge_in_h = None,
+          myflags=None#Only used if both = True. Otherwise features stored in nedge_in.
           ):
     """Initializes the model.
 
@@ -56,7 +56,7 @@ class LearnedSimulator(nn.Module):
     self._connectivity_radius = connectivity_radius
     self._normalization_stats = normalization_stats
     self._nparticle_types = nparticle_types
-
+    self.myflags = myflags
     # Particle type embedding has shape (9, 16)
     self._particle_type_embedding = nn.Embedding(
         nparticle_types, particle_type_embedding_size)
@@ -70,7 +70,7 @@ class LearnedSimulator(nn.Module):
         nmessage_passing_steps=nmessage_passing_steps,
         nmlp_layers=nmlp_layers,
         mlp_hidden_dim=mlp_hidden_dim)
-    if settings.USE_BOTH:
+    if myflags["USE_BOTH"]:
       self._encode_process_decode_both = graph_network.EncodeProcessDecodeBoth(
           nnode_in_features=nnode_in,
           nnode_out_features=particle_dimensions,
@@ -128,11 +128,11 @@ class LearnedSimulator(nn.Module):
         # returns 2xk hyperedge matrix, nr_edges. Does it based on KNN and KMeans clustering as described in the paper.
 
         batch_ids = torch.cat([torch.LongTensor([i for _ in range(n)]) for i, n in enumerate(nparticles_per_example)]).to(self._device)
-        top_s = settings.top_s
-        nr_cl = settings.k_m_cl  #nr clusters
-        knn   = settings.k_nn_nr #nr k nearest neighbours
-        radius= settings.con_rad
-        if settings.knn_clustering:
+        top_s = self.myflags["top_s"]
+        nr_cl = self.myflags["k_m_cl"]  #nr clusters
+        knn   = self.myflags["k_nn_nr"] #nr k nearest neighbours
+        radius= self.myflags["con_rad"]
+        if self.myflags["knn_clustering"]:
           edge_index = knn_graph(node_features, k=knn, batch=batch_ids, loop=add_self_edges) # get k nearest neighbours. what is batch
         else:
           edge_index = radius_graph(node_features, r=radius, batch=batch_ids, loop=add_self_edges)
@@ -140,7 +140,7 @@ class LearnedSimulator(nn.Module):
         nr_hyperedges = node_features.shape[0] + nr_cl #nr_nodes + nr_clusters
         hyperedge_dim = edge_index.shape[1] + nr_cl * top_s #each node has knn neighbours + each cluster has top S closest nodes. 
         hyperedge_matrix = torch.zeros((2,hyperedge_dim)).to(torch.int64)
-        if settings.kmeans_clustering:
+        if self.myflags["kmeans_clustering"]:
           clustering = KMeans(n_clusters=nr_cl,n_init=10).fit(node_features.cpu()) # init with k_m_cl cluster. Node features = nr_nodes, 2
           #get KNN nodes to each centre
           for i in range(nr_cl):
@@ -241,7 +241,7 @@ class LearnedSimulator(nn.Module):
         normalized_relative_displacements, dim=-1, keepdim=True)
     edge_features.append(normalized_relative_distances)
  
-    if settings.hyper_edge_set or settings.USE_BOTH:
+    if self.myflags["hyper_edge_set"] or self.myflags["USE_BOTH"]:
       #loopless implementation of returning hyperedge set
       nr_edges = senders.shape[0]
       top = torch.zeros((nr_edges*2),dtype=torch.int64,device=self._device)#.to(torch.int64).to(self._device)  #((1,2),(e2),(e3),...) - top is pairs of node indexes indicating edges
@@ -404,21 +404,21 @@ class LearnedSimulator(nn.Module):
     """
     
 
-    if settings.USE_BOTH:
+    if self.myflags["USE_BOTH"]:
       #node features are the same, edge_indexes and edge features will differ.
       node_features, edge_index_h, edge_features_h = self._encoder_preprocessor_hypergraph(
         current_positions, nparticles_per_example, particle_types)
       node_features, edge_index_g, edge_features_g = self._encoder_preprocessor(
         current_positions, nparticles_per_example, particle_types)
       
-    elif settings.return_hyperedges:
+    elif self.myflags["return_hyperedges"]:
       node_features, edge_index, edge_features = self._encoder_preprocessor_hypergraph(
         current_positions, nparticles_per_example, particle_types)
     else:
       node_features, edge_index, edge_features = self._encoder_preprocessor(
         current_positions, nparticles_per_example, particle_types)
     
-    if settings.USE_BOTH:
+    if self.myflags["USE_BOTH"]:
       predicted_normalized_acceleration = self._encode_process_decode_both(
         node_features, edge_index_g, edge_features_g, edge_index_h, edge_features_h)
     else:
@@ -459,7 +459,7 @@ class LearnedSimulator(nn.Module):
     noisy_position_sequence = position_sequence + position_sequence_noise
 
     # Perform the forward pass with the noisy position sequence.
-    if settings.USE_BOTH:
+    if self.myflags["USE_BOTH"]:
       #node features are the same, edge_indexes and edge features will differ.
       node_features, edge_index_h, edge_features_h = self._encoder_preprocessor_hypergraph(
         noisy_position_sequence, nparticles_per_example, particle_types)
@@ -467,14 +467,14 @@ class LearnedSimulator(nn.Module):
         noisy_position_sequence, nparticles_per_example, particle_types)
       
 
-    elif settings.return_hyperedges:
+    elif self.myflags["return_hyperedges"]:
       node_features, edge_index, edge_features = self._encoder_preprocessor_hypergraph(
         noisy_position_sequence, nparticles_per_example, particle_types)
     else:
       node_features, edge_index, edge_features = self._encoder_preprocessor(
         noisy_position_sequence, nparticles_per_example, particle_types)
     
-    if settings.USE_BOTH:
+    if self.myflags["USE_BOTH"]:
       predicted_normalized_acceleration = self._encode_process_decode_both(
         node_features, edge_index_g, edge_features_g, edge_index_h, edge_features_h)
     else:
