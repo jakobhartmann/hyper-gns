@@ -146,16 +146,7 @@ class LearnedSimulator(nn.Module):
         edge_index = knn_graph(node_features, k=knn, batch=batch_ids, loop=add_self_edges) # get k nearest neighbours. what is batch
         hyperedge_matrix[0,end_pos:] = edge_index[0,:]#nodes
         hyperedge_matrix[1,end_pos:] = edge_index[1,:]+nr_cl#edges
-
-        #precompute indices list. |ZOOOMMMMMM!!|
-        indices_clusters = torch.arange(nr_cl * top_s)
-        indices_clusters = hyperedge_matrix[0,indices_clusters]
-        indices_hyperedges = torch.arange(nr_cl * top_s, nr_cl * top_s + knn * node_features.shape[0])
-        indices_hyperedges = hyperedge_matrix[0,indices_hyperedges]
-        list_1 = list(torch.chunk(indices_clusters, nr_cl))#chunk returns a tuple of tensors. Thanks chatgpt
-        list_2 = list(torch.chunk(indices_hyperedges, node_features.shape[0]))
-        list_1.extend(list_2)
-        return hyperedge_matrix.to(self._device), nr_hyperedges, list_1
+        return hyperedge_matrix.to(self._device), nr_hyperedges
 
 
   def _encoder_preprocessor(
@@ -310,7 +301,7 @@ class LearnedSimulator(nn.Module):
       most_recent_position = position_sequence[:, -1] # (n_nodes, 2)
       velocity_sequence = time_diff(position_sequence)
       # senders and receivers are integers of shape (E,)
-      hyper_edge_set, nr_edges, indices_list = self._compute_graph_connectivity_hypergraph(most_recent_position, nparticles_per_example, self._connectivity_radius) # retruns k x 2 edge matrix and nr edges.
+      hyper_edge_set, nr_edges = self._compute_graph_connectivity_hypergraph(most_recent_position, nparticles_per_example, self._connectivity_radius) # retruns k x 2 edge matrix and nr edges.
       node_features = []
       # Normalized velocity sequence, merging spatial an time axis.
       velocity_stats = self._normalization_stats["velocity"]
@@ -409,9 +400,9 @@ class LearnedSimulator(nn.Module):
     if settings.USE_BOTH:
       #node features are the same, edge_indexes and edge features will differ.
       node_features, edge_index_h, edge_features_h = self._encoder_preprocessor_hypergraph(
-        noisy_position_sequence, nparticles_per_example, particle_types)
+        current_positions, nparticles_per_example, particle_types)
       node_features, edge_index_g, edge_features_g = self._encoder_preprocessor(
-        noisy_position_sequence, nparticles_per_example, particle_types)
+        current_positions, nparticles_per_example, particle_types)
       
     elif settings.return_hyperedges:
       node_features, edge_index, edge_features = self._encoder_preprocessor_hypergraph(
