@@ -54,7 +54,7 @@ flags.DEFINE_string('wandb_resume', default = None, help = 'Whether or not to re
 flags.DEFINE_string('wandb_run_id', default = None, help = 'Weights & Biases run id to resume a run.')
 
 # Rollout
-flags.DEFINE_multi_integer('model_step_list', default = [250000, 300000, 350000, 400000, 450000, 500000], help = 'List of steps corresponding to model checkpoints used to perform rollout prediction.')
+flags.DEFINE_multi_integer('model_step_list', default = [0, 50000, 100000, 150000, 200000, 250000, 300000, 350000, 400000, 450000, 500000], help = 'List of steps corresponding to model checkpoints used to perform rollout prediction.')
 
 # Hyperedge type
 flags.DEFINE_boolean('USE_BOTH', default = True, help = 'Whether or not to use 2 uniform hyperedges (concat) + hyperedges (kmeans and knn).')
