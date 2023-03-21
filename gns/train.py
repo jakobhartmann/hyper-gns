@@ -22,7 +22,7 @@ from gns import reading_utils
 from gns import data_loader
 from gns import distribute
 #from gns import settings
-from utils import logging
+from utils.custom_logger import Logger
 
 flags.DEFINE_enum(
     'mode', 'train', ['train', 'valid', 'rollout', 'rollout_multiple'],
@@ -63,7 +63,7 @@ flags.DEFINE_boolean('hyper_edge_set', default = True, help = 'Whether to use 2 
 
 # Which hyperedge features to use
 flags.DEFINE_boolean('knn_clustering', default = True, help = 'See settings.py for more info')
-flags.DEFINE_boolean('radius_clustering', default = True, help = 'See settings.py for more info')
+flags.DEFINE_boolean('radius_clustering', default = False, help = 'See settings.py for more info')
 flags.DEFINE_boolean('kmeans_clustering', default = True, help = 'See settings.py for more info')
 
 
@@ -206,7 +206,7 @@ def predict_multiple(device: str, FLAGS, myflags):
   metadata = reading_utils.read_metadata(FLAGS.data_path)
   simulator = _get_simulator(metadata, FLAGS.noise_std, FLAGS.noise_std, device, myflags)
 
-  logger = logging.Logger(use_wandb = FLAGS.use_wandb, wandb_project = FLAGS.wandb_project, wandb_entity = FLAGS.wandb_entity, wandb_resume = FLAGS.wandb_resume, wandb_run_id = FLAGS.wandb_run_id, config = FLAGS)
+  logger = Logger(use_wandb = FLAGS.use_wandb, wandb_project = FLAGS.wandb_project, wandb_entity = FLAGS.wandb_entity, wandb_resume = FLAGS.wandb_resume, wandb_run_id = FLAGS.wandb_run_id, config = FLAGS)
 
   for step in FLAGS.model_step_list:
     model_file = os.path.join(FLAGS.model_path, 'model-' + str(step) + '.pt')
@@ -292,7 +292,7 @@ def train(rank, flags, world_size):
 
   if rank == 0:
     # Initialize logger
-    logger = logging.Logger(use_wandb = flags['use_wandb'], wandb_project = flags['wandb_project'], wandb_entity = flags['wandb_entity'], wandb_resume = flags['wandb_resume'], wandb_run_id = flags['wandb_run_id'], config = flags)
+    logger = Logger(use_wandb = flags['use_wandb'], wandb_project = flags['wandb_project'], wandb_entity = flags['wandb_entity'], wandb_resume = flags['wandb_resume'], wandb_run_id = flags['wandb_run_id'], config = flags)
     train_loss = torch.tensor([]).to(rank)
 
   # If model_path does exist and model_file and train_state_file exist continue training.

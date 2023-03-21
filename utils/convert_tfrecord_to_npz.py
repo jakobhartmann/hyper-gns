@@ -43,7 +43,11 @@ if __name__ == '__main__':
             particle_types = trajectory[0]['particle_type']
 
             # Combine positions and particle types and add them to directory
-            trajectory_npz = np.array([positions, particle_types], dtype = object)
+            try:
+                trajectory_npz = np.array([positions, particle_types], dtype = object)
+            except Exception as e:
+                print(e)
+
             dict_npz[key + str(i)] = trajectory_npz
 
         # Save npz dataset to disk
