@@ -1,6 +1,17 @@
-# Graph Network Simulator (GNS)
+# Hyper-Graph Network Simulator (Hyper-GNS)
 
 [![Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/166jKRO4kcG6RWGPcRUidZjwWIEjEeVTO#scrollTo=TZxyafg5cvTh)
+
+This repository accompanies the mini-project "Simulating Physics using Hypergraph Networks" which was part of the course "Representation Learning on Graphs and Networks" (L45) at the University of Cambridge in Lent term 2023. The main goal was to investigate whether hypergraphs can improve the prediction accuracy of physics simulations by capturing higher-order interactions between particles. A sneak peek at our [experimental results](/experimental_results/) can be found below:
+|       | Ground truth | GNS | Hyper-GNS | Hybrid model |
+| :---: | :----------: | :-: | :-------: | :----------: |
+| **WaterDrops** | ![](experimental_results/readme_gifs/water-drops/ground_truth.gif) | ![](experimental_results/readme_gifs/water-drops/gns.gif) | ![](experimental_results/readme_gifs/water-drops/hyper_gns.gif) | ![](experimental_results/readme_gifs/water-drops/hybrid_model.gif) |
+| **WaterRamps** | ![](experimental_results/readme_gifs/water-ramps/ground_truth.gif) | ![](experimental_results/readme_gifs/water-ramps/gns.gif) | ![](experimental_results/readme_gifs/water-ramps/hyper_gns.gif) | ![](experimental_results/readme_gifs/water-ramps/hybrid_model.gif) |
+| **Sand** | ![](experimental_results/readme_gifs/sand/ground_truth.gif) | ![](experimental_results/readme_gifs/sand/gns.gif) | ![](experimental_results/readme_gifs/sand/hyper_gns.gif) | ![](experimental_results/readme_gifs/sand/hybrid_model.gif) |
+| **MultiMaterial** | ![](experimental_results/readme_gifs/multi-material/ground_truth.gif) | ![](experimental_results/readme_gifs/multi-material/gns.gif) | ![](experimental_results/readme_gifs/multi-material/hyper_gns.gif) | ![](experimental_results/readme_gifs/multi-material/hybrid_model.gif) |
+
+# Graph Network Simulator (GNS)
+
 [![DOI](https://zenodo.org/badge/427487727.svg)](https://zenodo.org/badge/latestdoi/427487727)
 [![CircleCI](https://dl.circleci.com/status-badge/img/gh/geoelements/gns/tree/main.svg?style=svg)](https://dl.circleci.com/status-badge/redirect/gh/geoelements/gns/tree/main)
 [![Docker](https://quay.io/repository/geoelements/gns/status "Docker Repository on Quay")](https://quay.io/repository/geoelements/gns)
