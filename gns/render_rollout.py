@@ -1,3 +1,5 @@
+import pathlib
+
 import pickle
 
 from absl import app
@@ -13,6 +15,13 @@ flags.DEFINE_string("rollout_dir", None, help="Directory where rollout.pkl are l
 flags.DEFINE_string("rollout_name", None, help="Name of rollout `.pkl` file")
 flags.DEFINE_integer("step_stride", 3, help="Stride of steps to skip.")
 flags.DEFINE_enum("output_mode", "gif", ["gif", "vtk"], help="Type of render output")
+flags.DEFINE_boolean("grid_and_ticks", False, help="Whether or not to show the grid and ticks.")
+flags.DEFINE_boolean("verbose", False, help="Whether or not to print rendering progress.")
+flags.DEFINE_boolean("render_multiple", False, help="Whether or not to render multiple rollouts at once.")
+flags.DEFINE_string("experiments_dir", None, help="Experiments directory -> experiments -> checkpoints -> rollouts (i.e. `.pkl` files).")
+flags.DEFINE_list("experiments", [], help="List of experiments to rollout. If empty, rollout all.")
+flags.DEFINE_list("checkpoints", [], help="List of checkpoints to rollout. If empty, rollout all.")
+flags.DEFINE_list("rollout_trajectories", [], help="List of trajectories to rollout. If empty, rollout all.")
 
 FLAGS = flags.FLAGS
 
@@ -119,7 +128,8 @@ class Render():
         # Fig creating function for 2d
         if self.dims == 2:
             def animate(i):
-                print(f"Render step {i}/{self.num_steps}")
+                if FLAGS.verbose:
+                    print(f"Render step {i}/{self.num_steps}")
 
                 fig.clear()
                 for j, datacase in enumerate(trajectory_datacases):
@@ -127,17 +137,22 @@ class Render():
                     axes[j] = fig.add_subplot(1, 2, j + 1, autoscale_on=False)
                     axes[j].set_aspect(1.)
                     axes[j].set_xlim([float(xboundary[0]), float(xboundary[1])])
+                    # axes[j].set_xlim([0, 1])
                     axes[j].set_ylim([float(yboundary[0]), float(yboundary[1])])
+                    # axes[j].set_ylim([0, 1])
                     for mask, color in color_mask:
                         axes[j].scatter(self.trajectory[datacase][i][mask, 0],
                                         self.trajectory[datacase][i][mask, 1], s=point_size, color=color)
-                    axes[j].grid(True, which='both')
+                    axes[j].grid(FLAGS.grid_and_ticks, which='both')
                     axes[j].set_title(render_datacases[j])
+                    if not FLAGS.grid_and_ticks:
+                        plt.tick_params(axis = 'both', bottom = False, top = False, left = False, right = False, labelbottom = False, labeltop = False, labelleft = False, labelright = False)
 
         # Fig creating function for 3d
         elif self.dims == 3:
             def animate(i):
-                print(f"Render step {i}/{self.num_steps} for {self.output_name}")
+                if FLAGS.verbose:
+                    print(f"Render step {i}/{self.num_steps} for {self.output_name}")
 
                 fig.clear()
                 for j, datacase in enumerate(trajectory_datacases):
@@ -197,6 +212,50 @@ def main(_):
         render.write_vtk()
 
 
+def main_multiple(_):
+    if not FLAGS.experiments_dir:
+        raise ValueError("An `experiments_dir` must be passed.")
+    
+    all_experiments = [f.path for f in os.scandir(FLAGS.experiments_dir) if f.is_dir()]
+
+    for experiment in all_experiments:
+        if (FLAGS.experiments != []) and (pathlib.Path(experiment).stem not in FLAGS.experiments):
+                continue
+        
+        print('Experiment: ', pathlib.Path(experiment).stem)
+        all_checkpoints = [f.path for f in os.scandir(experiment) if f.is_dir()]
+
+        for checkpoint in all_checkpoints:
+            if (FLAGS.checkpoints != []) and (pathlib.Path(checkpoint).stem not in FLAGS.checkpoints):
+                continue
+
+            print('Checkpoint: ', pathlib.Path(checkpoint).stem)
+            all_rollouts = [f.path for f in os.scandir(checkpoint) if f.path.endswith('.pkl')]
+            
+            for rollout in all_rollouts:
+                if (FLAGS.rollout_trajectories != []) and (pathlib.Path(rollout).stem not in FLAGS.rollout_trajectories):
+                    continue
+
+                print('Rollout: ', pathlib.Path(rollout).stem)
+
+                render = Render(input_dir = checkpoint + '/', input_name = pathlib.Path(rollout).stem)
+
+                if FLAGS.output_mode == "gif":
+                    render.render_gif_animation(
+                        point_size=1,
+                        timestep_stride=FLAGS.step_stride,
+                        vertical_camera_angle=20,
+                        viewpoint_rotation=0.3
+                    )
+                elif FLAGS.output_mode == "vtk":
+                    render.write_vtk()
+
+def redirect(_):
+    if FLAGS.render_multiple:
+        app.run(main_multiple)
+    else:
+        app.run(main)
+
 if __name__ == '__main__':
-    app.run(main)
+    app.run(redirect)
 
